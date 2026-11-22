@@ -1,0 +1,82 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+          cache: true
+
+      - name: gofmt
+        shell: bash
+        run: bash scripts/gofmt-check.sh
+
+      - name: vet
+        run: go vet ./...
+
+      # The recorder and end-to-end tests drive the Chrome the runner images
+      # ship with; they skip themselves where no browser is found.
+      - name: test
+        run: go test ./...
+
+      - name: race test
+        if: matrix.os != 'windows-latest'
+        run: go test -race ./...
+
+  cross-build:
+    name: cross-build (6 targets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+          cache: true
+
+      - name: vet for the other release OSes
+        shell: bash
+        run: |
+          for os in windows darwin; do
+            echo "GOOS=$os go vet ./..."
+            GOOS=$os go vet ./...
+          done
+
+      - name: build 6 zips
+        shell: bash
+        run: VERSION="ci-${GITHUB_SHA::7}" bash scripts/build.sh
+
+      - name: check zips
+        shell: bash
+        run: |
+          ls -l dist
+          test "$(ls dist/har2mcp_*.zip | wc -l)" -eq 6
+          test "$(wc -l < dist/SHA256SUMS)" -eq 6
+          (cd dist && sha256sum --check SHA256SUMS)
+
+      - name: upload zips
+        uses: actions/upload-artifact@v7
+        with:
+          name: har2mcp-dist
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS
+          retention-days: 7

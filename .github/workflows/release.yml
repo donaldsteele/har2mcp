@@ -1,0 +1,57 @@
+name: release
+
+# Runs when a version tag is pushed (v0.1.0, v0.2.0-rc1, ...): tests, builds
+# the six zips and SHA256SUMS, and publishes them as a GitHub release.
+# A tag containing "-" is published as a pre-release.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: github release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REF_NAME: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+          cache: true
+
+      - name: test
+        run: go test ./...
+
+      - name: build 6 targets, zips and SHA256SUMS
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+          RELEASE: '1'
+        run: bash scripts/build.sh
+
+      - name: verify artifacts
+        shell: bash
+        run: |
+          count="$(ls dist/har2mcp_*.zip | wc -l | tr -d ' ')"
+          test "$count" -eq 6 || { echo "expected 6 zips, found $count"; exit 1; }
+          test "$(wc -l < dist/SHA256SUMS)" -eq 6
+          (cd dist && sha256sum --check SHA256SUMS)
+
+      - name: create release
+        shell: bash
+        run: |
+          prerelease=()
+          if [[ "$REF_NAME" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$REF_NAME" dist/* \
+            --title "har2mcp $REF_NAME" \
+            --generate-notes \
+            "${prerelease[@]}"

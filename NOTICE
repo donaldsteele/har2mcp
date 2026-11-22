@@ -1,0 +1,17 @@
+har2mcp
+Copyright 2026 Don Steele
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full text.
+
+The har2mcp binary includes these third-party Go modules, each under its
+own license (see go.mod for the exact versions):
+
+- github.com/chromedp/chromedp and github.com/chromedp/cdproto,
+  MIT License, Copyright (c) 2016-2026 Kenneth Shaw.
+- github.com/modelcontextprotocol/go-sdk (the Model Context Protocol Go
+  SDK), Apache License 2.0 and MIT License.
+- github.com/anthropics/anthropic-sdk-go, MIT License,
+  Copyright 2023 Anthropic, PBC.
+- go.yaml.in/yaml/v3, MIT License and Apache License 2.0. Its NOTICE reads:
+  Copyright 2011-2016 Canonical Ltd.
