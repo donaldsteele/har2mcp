@@ -1,0 +1,125 @@
+har2mcp - how to open it
+========================
+
+har2mcp is a command-line program. You run it from a terminal (PowerShell
+or Command Prompt on Windows, Terminal on a Mac or Linux). Double-clicking
+it only flashes a window, because it needs a command such as
+"har2mcp record http://192.168.1.10".
+
+Pick the right download
+-----------------------
+  Windows PC (most laptops)        har2mcp_<version>_windows_amd64.zip
+  Windows on ARM                   har2mcp_<version>_windows_arm64.zip
+  Mac with Apple chip (M1/M2/M3+)  har2mcp_<version>_darwin_arm64.zip
+  Mac with Intel chip              har2mcp_<version>_darwin_amd64.zip
+  Linux PC                         har2mcp_<version>_linux_amd64.zip
+  Linux on ARM (Raspberry Pi 4/5)  har2mcp_<version>_linux_arm64.zip
+
+Not sure which Mac? Apple menu > About This Mac. "Chip: Apple M..." means
+arm64. "Processor: Intel ..." means amd64.
+
+Not sure which Linux? Run: uname -m
+"x86_64" means amd64. "aarch64" means arm64.
+
+Check the download (optional): the release page has a SHA256SUMS file.
+  Windows:  certutil -hashfile har2mcp_<version>_windows_amd64.zip SHA256
+  Mac:      shasum -a 256 har2mcp_<version>_darwin_arm64.zip
+  Linux:    sha256sum -c SHA256SUMS --ignore-missing
+The long number must match the line for your zip.
+
+To record, you also need Google Chrome, Microsoft Edge or Chromium
+installed. To build the MCP server har2mcp generates, you need Go 1.26 or
+later (https://go.dev/dl/).
+
+
+WINDOWS
+-------
+1. Right-click the zip > Properties. If there is an "Unblock" box at the
+   bottom of the General tab, tick it and click OK. This stops Windows
+   from treating every file in the zip as downloaded from the internet.
+2. Right-click the zip > Extract All. Move har2mcp.exe to a folder of your
+   own, for example C:\Users\you\bin.
+3. Open PowerShell in that folder (Shift + right-click in the folder >
+   "Open PowerShell window here", or "Open in Terminal") and run:
+
+       .\har2mcp.exe version
+
+4. If Windows SmartScreen says "Windows protected your PC", the program is
+   not code-signed. Click "More info", then "Run anyway". You only need to
+   do this once per download. If you skipped step 1, PowerShell can also
+   unblock the file:
+
+       Unblock-File .\har2mcp.exe
+
+To run har2mcp from any folder, add its folder to your PATH: Start >
+"Edit environment variables for your account" > Path > Edit > New, then
+paste the folder and open a new terminal.
+
+
+MAC
+---
+The Mac build is not signed or notarized, so macOS blocks it the first
+time.
+
+1. Unzip the file (double-click it in Finder).
+2. Open Terminal (Applications > Utilities > Terminal).
+3. Type "cd " (with a space), drag the unzipped folder into the Terminal
+   window, and press Return.
+4. Remove the download block and make it runnable:
+
+       xattr -d com.apple.quarantine har2mcp
+       chmod +x har2mcp
+
+5. Check it runs:
+
+       ./har2mcp version
+
+If macOS still says the program "cannot be opened because the developer
+cannot be verified": System Settings > Privacy & Security, scroll down,
+click "Allow Anyway" next to har2mcp, and run it again.
+
+To run it from any folder, move it onto your PATH, for example:
+
+       sudo mv har2mcp /usr/local/bin/
+
+
+LINUX
+-----
+1. Unzip the file:  unzip har2mcp_<version>_linux_amd64.zip -d har2mcp
+2. In a terminal:   cd har2mcp && ./har2mcp version
+   (If it says "permission denied", run: chmod +x har2mcp)
+3. To run it from any folder, move it onto your PATH, for example:
+
+       sudo mv har2mcp /usr/local/bin/
+
+Recording opens a browser window, so run "har2mcp record" on a computer
+with a desktop. The other commands work without one.
+
+
+FIRST STEPS
+-----------
+  har2mcp record http://192.168.1.10 -o nas.har
+  har2mcp analyze nas.har --name nas
+  har2mcp inspect nas.spec.yaml
+  har2mcp generate nas.spec.yaml --target go
+
+Replace http://192.168.1.10 with your device's address. The README has the
+full walk-through, including building the server and connecting Claude.
+
+
+IS IT SAFE?
+-----------
+har2mcp works offline. Nothing leaves your computer unless you run
+"har2mcp enhance", which sends the tool list (never your password,
+cookies or the recording) to Claude to improve names and descriptions.
+"har2mcp enhance nas.spec.yaml --dry-run" prints exactly what it
+would send.
+
+A recording (.har file) contains the password you typed and your session
+cookies. Keep it private. "har2mcp redact" makes a copy without them that
+you can share.
+
+The servers har2mcp generates give Claude full control of what you
+recorded, including deleting and rebooting. Switch off any tool you don't
+want Claude to use by setting "enabled: false" in the spec, then generate
+again. See the README and SECURITY.md at github.com/donaldsteele/har2mcp.

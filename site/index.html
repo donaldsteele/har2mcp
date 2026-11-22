@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>har2mcp · MCP servers for your own devices</title>
+<meta name="description" content="har2mcp records you using a device's web admin page, turns the API calls behind it into an editable spec, and generates a Go MCP server so Claude can control your NAS, router or other home-network device. One binary for Windows, macOS and Linux, offline by default, Apache-2.0.">
+<meta name="color-scheme" content="dark light">
+<meta property="og:title" content="har2mcp: MCP servers for your own devices">
+<meta property="og:description" content="Record a device's web UI once, get a Go MCP server that gives Claude the same controls. Offline by default, secrets never in the code.">
+<meta property="og:type" content="website">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/site.css">
+<script>
+  // Apply the saved theme before first paint; no saved choice follows the system.
+  try { var t = localStorage.getItem('har2mcp-site-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="top">
+  <div class="wrap">
+    <a class="wordmark" href="#top" aria-label="har2mcp home"><img class="logo" src="assets/favicon.svg" alt="" width="28" height="28">har2mcp<span class="caret" aria-hidden="true"></span></a>
+    <nav aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#devices">Devices</a>
+      <a href="#recorder">Recorder</a>
+      <a href="#spec">Spec</a>
+      <a href="#claude">Claude</a>
+      <a href="#fit">What it fits</a>
+      <a href="#security">Security</a>
+      <a href="#download" class="persist">Download</a>
+      <a href="https://github.com/donaldsteele/har2mcp" class="persist">GitHub</a>
+    </nav>
+    <button type="button" class="themebtn" id="themebtn" aria-label="Switch to light theme">
+      <svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-sun"></use></svg>
+    </button>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" id="top">
+    <svg class="traces" viewBox="0 0 1400 640" aria-hidden="true">
+      <g>
+        <path class="wire" d="M0 96H170L210 136H330"/>
+        <path class="wire" d="M0 188H110L154 232H250L280 202H360"/>
+        <path class="wire" d="M0 300H200L240 260H320"/>
+        <path class="wire" d="M0 392H130L174 436H350"/>
+        <path class="wire" d="M0 500H100L140 540H280"/>
+        <path class="wire" d="M1400 120H1220L1180 160H1070"/>
+        <path class="wire" d="M1400 214H1290L1246 258H1150L1120 228H1040"/>
+        <path class="wire" d="M1400 330H1200L1160 290H1080"/>
+        <path class="wire" d="M1400 420H1270L1226 464H1050"/>
+        <path class="wire" d="M1400 520H1300L1260 560H1120"/>
+      </g>
+      <g>
+        <path class="sig" pathLength="100" d="M0 96H170L210 136H330"/>
+        <path class="sig" pathLength="100" d="M0 188H110L154 232H250L280 202H360"/>
+        <path class="sig" pathLength="100" d="M0 300H200L240 260H320"/>
+        <path class="sig" pathLength="100" d="M0 392H130L174 436H350"/>
+        <path class="sig" pathLength="100" d="M0 500H100L140 540H280"/>
+        <path class="sig" pathLength="100" d="M1400 120H1220L1180 160H1070"/>
+        <path class="sig" pathLength="100" d="M1400 214H1290L1246 258H1150L1120 228H1040"/>
+        <path class="sig" pathLength="100" d="M1400 330H1200L1160 290H1080"/>
+        <path class="sig" pathLength="100" d="M1400 420H1270L1226 464H1050"/>
+        <path class="sig" pathLength="100" d="M1400 520H1300L1260 560H1120"/>
+      </g>
+      <g>
+        <circle cx="330" cy="136" r="4"/><circle cx="360" cy="202" r="4"/><circle cx="320" cy="260" r="4"/><circle cx="350" cy="436" r="4"/><circle cx="280" cy="540" r="4"/>
+        <circle cx="1070" cy="160" r="4"/><circle cx="1040" cy="228" r="4"/><circle cx="1080" cy="290" r="4"/><circle cx="1050" cy="464" r="4"/><circle cx="1120" cy="560" r="4"/>
+      </g>
+    </svg>
+    <div class="wrap narrow">
+      <p class="pill"><span class="pulse" aria-hidden="true"></span> Open source · v0.1.0 · Windows, macOS &amp; Linux</p>
+      <h1>Turn your device's web page into an <em>MCP&nbsp;server</em>.</h1>
+      <p class="capability">Use the admin page of your NAS, router or UPS once, naming each step. har2mcp writes an MCP server that lets Claude do the same.</p>
+      <p class="lede">Many devices on your network already have an API: the one their web page calls. har2mcp records those calls in a throwaway browser while you work, turns them into a spec you can read and edit, and generates the Go source of a server that logs in, renews its session and streams files. One binary, offline by default, and your password never ends up in the code.</p>
+      <div class="cta">
+        <a class="button primary" href="#download"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-download"></use></svg>Download</a>
+        <a class="button ghost" href="https://github.com/donaldsteele/har2mcp">View on GitHub<svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-external-link"></use></svg></a>
+      </div>
+      <p class="micro">Free · Apache-2.0 · Works offline · No account · Generated code you can read</p>
+    </div>
+    <figure class="hero-term">
+      <div class="term">
+        <div class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">Terminal · from web page to MCP server</span></div>
+        <div class="cmd"><code><span class="prompt">$</span>har2mcp record http://192.168.1.10 -o nas.har</code><button type="button" class="copybtn" data-copy="har2mcp record http://192.168.1.10 -o nas.har" aria-label="Copy the record command">Copy</button></div>
+        <div class="out"><code>Recording. Use the har2mcp box (bottom-right) to name each step. Close the browser window when done.
+<span class="wn">warning:</span> nas.har contains your password and session cookies; keep it private (use 'har2mcp redact' before sharing)</code></div>
+        <div class="cmd"><code><span class="prompt">$</span>har2mcp analyze nas.har --name nas  <span class="cmt"># writes nas.spec.yaml</span></code><button type="button" class="copybtn" data-copy="har2mcp analyze nas.har --name nas" aria-label="Copy the analyze command">Copy</button></div>
+        <div class="cmd"><code><span class="prompt">$</span>har2mcp generate nas.spec.yaml --target go  <span class="cmt"># writes nas-mcp/</span></code><button type="button" class="copybtn" data-copy="har2mcp generate nas.spec.yaml --target go" aria-label="Copy the generate command">Copy</button></div>
+        <div class="cmd"><code><span class="prompt">$</span>cd nas-mcp &amp;&amp; go build -o nas-mcp .</code><button type="button" class="copybtn" data-copy="cd nas-mcp &amp;&amp; go build -o nas-mcp ." aria-label="Copy the build command">Copy</button></div>
+        <div class="cmd"><code><span class="prompt">$</span>claude mcp add --transport stdio --env NAS_URL=http://192.168.1.10 --env NAS_USER=admin --env NAS_PASSWORD=your-password nas -- /path/to/nas-mcp/nas-mcp</code><button type="button" class="copybtn" data-copy="claude mcp add --transport stdio --env NAS_URL=http://192.168.1.10 --env NAS_USER=admin --env NAS_PASSWORD=your-password nas -- /path/to/nas-mcp/nas-mcp" aria-label="Copy the Claude Code command">Copy</button></div>
+      </div>
+    </figure>
+  </section>
+
+  <section class="stats" aria-label="At a glance">
+    <div class="wrap grid4">
+      <div class="stat"><b>1 binary</b><span>records, analyzes and generates. No installer, no runtime.</span></div>
+      <div class="stat"><b>6 builds</b><span>Windows, macOS and Linux, each for amd64 and arm64</span></div>
+      <div class="stat"><b>Offline</b><span>by default. Only <code>enhance</code> talks to Claude, and only when you run it.</span></div>
+      <div class="stat"><b>Apache-2.0</b><span>free and open source, on GitHub</span></div>
+    </div>
+  </section>
+
+  <section class="band" id="how">
+    <div class="wrap">
+      <p class="eyebrow">How it works</p>
+      <h2>From a web page to Claude in three commands.</h2>
+      <p class="sub">A device's admin page is usually a JavaScript app that calls the device's own HTTP API. har2mcp watches those calls while you use the page, learns the login, the session and each operation, and writes a server that makes the same calls when Claude asks.</p>
+      <ol class="timeline" aria-label="The pipeline, from your browser session to Claude">
+        <li class="tick start"><span class="t">you</span><b>the web page</b><span>Log in and do each action once, naming the steps as you go.</span></li>
+        <li class="tick"><span class="t">record</span><b>nas.har</b><span>Every request and response, with your step names. Standard HAR 1.2.</span></li>
+        <li class="tick"><span class="t">analyze</span><b>nas.spec.yaml</b><span>The login, the session and one tool per operation, in YAML you can edit.</span></li>
+        <li class="tick"><span class="t">generate</span><b>nas-mcp/</b><span>Go source on the official MCP Go SDK. <code>go build</code> it once.</span></li>
+        <li class="tick end"><span class="t">claude</span><b>your tools</b><span>Claude calls them; the server logs in and sends the requests.</span></li>
+      </ol>
+
+      <div class="cmds">
+        <article class="cmdcard">
+          <h3>Record</h3>
+          <div class="term"><div class="cmd"><code><span class="prompt">$</span>har2mcp record &lt;url&gt; -o nas.har</code></div></div>
+          <p>Chrome, Edge or Chromium opens with a <b>fresh, temporary profile</b>, so you log in from scratch and har2mcp sees exactly how the login works. Name each action in the har2mcp box as you do it. Add <code>--insecure</code> for a self-signed certificate.</p>
+        </article>
+        <article class="cmdcard">
+          <h3>Analyze</h3>
+          <div class="term"><div class="cmd"><code><span class="prompt">$</span>har2mcp analyze nas.har --name nas</code></div></div>
+          <p>Finds the login request, the session cookies and any CSRF token, groups requests into operations, works out which values are inputs, and names each tool after your step: <code>list disks</code> becomes <code>list_disks</code>.</p>
+        </article>
+        <article class="cmdcard">
+          <h3>Generate</h3>
+          <div class="term"><div class="cmd"><code><span class="prompt">$</span>har2mcp generate nas.spec.yaml --target go</code></div></div>
+          <p>Writes a Go module that <b>builds with no edits</b>: an MCP server over stdio, an HTTP client that logs in and renews the session, and one tool per enabled operation. Build it with Go 1.26 or later.</p>
+        </article>
+      </div>
+      <p class="note">Also in the box: <code>har2mcp inspect</code> prints a summary of a recording or spec with secrets left out, <code>har2mcp redact</code> makes a copy of a recording you can share, and <code>har2mcp enhance</code> optionally asks Claude for better tool names and descriptions.</p>
+    </div>
+  </section>
+
+  <section class="band devices-band" id="devices">
+    <div class="wrap">
+      <p class="eyebrow">Your devices</p>
+      <h2>Anything with a web admin page.</h2>
+      <p class="sub">har2mcp is for devices you own whose web page talks to a JSON or XML API: the boxes on your home network that never got an official API, let alone an MCP server. Below are the kinds of devices it is meant for, with ideas to try. They are ideas, not a list of tested models.</p>
+      <div class="cards">
+        <article class="card"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-hard-drive"></use></svg><h3>NAS</h3><p>Disks and their health, shares, users, and files in and out. A TerraMaster NAS running TOS is the first target, and the test suite records against a simulated one.</p><p class="try">try: <span>list disks · add share · upload file</span></p></article>
+        <article class="card"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-router"></use></svg><h3>Routers</h3><p>Connected clients, port forwards, guest Wi-Fi and firmware status. Router pages that are server-rendered HTML, rather than an app calling an API, won't work in v0.1.</p><p class="try">try: <span>list clients · enable guest wifi</span></p></article>
+        <article class="card"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-cctv"></use></svg><h3>IP cameras</h3><p>The settings behind the camera's web page: motion detection, recording schedules, night mode. Video streams don't become tools.</p><p class="try">try: <span>get motion settings · set schedule</span></p></article>
+        <article class="card"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-plug"></use></svg><h3>Smart plugs &amp; hubs</h3><p>On, off, schedules and power readings, for plugs and hubs that have a local web page of their own, not only a phone app.</p><p class="try">try: <span>turn plug off · get power usage</span></p></article>
+        <article class="card"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-printer"></use></svg><h3>Printers</h3><p>Supply levels, the job queue and network settings from the printer's built-in web page.</p><p class="try">try: <span>get supply levels · cancel job</span></p></article>
+        <article class="card"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-battery-charging"></use></svg><h3>UPS units</h3><p>Battery charge, load, estimated runtime and self-tests from a UPS network card's page.</p><p class="try">try: <span>get battery status · run self test</span></p></article>
+        <article class="card"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-solar-panel"></use></svg><h3>Solar inverters</h3><p>Today's yield, battery state and settings, for inverters with a local status page on your network.</p><p class="try">try: <span>get today yield · set charge limit</span></p></article>
+        <article class="card"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-box"></use></svg><h3>3D printers</h3><p>Status, starting and pausing jobs, and uploading files through the printer's web interface. Live updates sent over WebSockets aren't turned into tools in v0.1.</p><p class="try">try: <span>upload gcode · pause print</span></p></article>
+      </div>
+      <p class="honest"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-info"></use></svg><span><b>Whether a device works depends on its web page,</b> not its brand: how it logs in, and whether it calls an API or reloads whole HTML pages. <a href="#fit">What it fits</a> lists both sides honestly. If you try har2mcp on your hardware, an issue with the output of <code>har2mcp inspect</code> helps everyone.</span></p>
+    </div>
+  </section>
+
+  <section class="band" id="recorder">
+    <div class="wrap">
+      <p class="eyebrow">The recorder</p>
+      <h2>Name each step as you go.</h2>
+      <p class="sub">Your step names become tool names, so the recording is where a good server starts. Below is a mock-up of what you see while recording: the device's own page, with har2mcp's box in the corner.</p>
+      <div class="feature">
+        <div class="copy">
+          <p class="reading-label">A box in the corner</p>
+          <h3>Type a name, press Start, do it, press Done.</h3>
+          <p>The box stays in the bottom-right corner across page loads and counts the requests the page makes during each step. Make <b>login</b> your first step, then one step per thing you want Claude to do.</p>
+          <p>The window is a <b>new browser profile in a temporary folder</b>: no extensions, saved passwords or history, and it is deleted when you close the window. Your own profile is never read or changed.</p>
+          <ul class="readings"><li>throwaway profile</li><li>login captured</li><li>HAR 1.2</li><li>mode 0600</li></ul>
+        </div>
+        <figure class="shot">
+          <div class="window" role="img" aria-label="Mock-up: a NAS admin page at http://192.168.1.10 showing its Disks table, with the Refresh button just clicked. In the bottom-right corner, the har2mcp box shows Step: list disks, a red dot with Recording step, a Done button, and 2 requests this step.">
+            <div class="chrome" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">http://192.168.1.10/#/storage · recording with har2mcp</span></div>
+            <div class="mock" aria-hidden="true">
+              <nav><b>NAS admin</b><span>Overview</span><span class="on">Storage</span><span>Shares</span><span>Users</span><span>System</span></nav>
+              <main>
+                <div class="bar"><h4>Disks</h4><span class="btn clicked">Refresh</span></div>
+                <table>
+                  <thead><tr><th>Disk</th><th>Model</th><th>Size</th><th>Health</th></tr></thead>
+                  <tbody>
+                    <tr><td>sda</td><td>4TB NAS HDD</td><td>4000 GB</td><td><span class="good">Good</span></td></tr>
+                    <tr><td>sdb</td><td>4TB NAS HDD</td><td>4000 GB</td><td><span class="good">Good</span></td></tr>
+                  </tbody>
+                </table>
+              </main>
+              <div class="ovl">
+                <div class="hd"><b>har2mcp</b><span class="min">–</span></div>
+                <div class="bd">
+                  <div class="row"><span class="lbl">Step:</span><span class="field">list disks</span></div>
+                  <div class="row"><span class="rec">Recording step</span><span class="done">Done</span></div>
+                  <div class="count"><b>2</b> requests this step</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <figcaption><b>A mock-up, drawn in HTML.</b> The NAS page is invented; the box matches the recorder's design.</figcaption>
+        </figure>
+      </div>
+      <h3 class="minor">What goes into the recording</h3>
+      <ul class="recorded">
+        <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-file-json"></use></svg><span><b>Every request and response</b> the page makes, with bodies up to 2 MiB each (<code>--body-cap</code>), cookies, redirects and timings.</span></li>
+        <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-flag"></use></svg><span><b>Your steps:</b> their names, start and end times, the button you clicked, and the values you typed, with each field's label.</span></li>
+        <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-key-round"></use></svg><span><b>The login form:</b> what you typed and where, so analysis can tell whether the password is sent as typed or scrambled in the page.</span></li>
+        <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-upload"></use></svg><span><b>Uploads and downloads:</b> the form structure, file names, sizes and content types. WebSocket messages are recorded too, but not used in v0.1.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="band" id="spec">
+    <div class="wrap">
+      <p class="eyebrow">The spec</p>
+      <h2>A file you can read, edit and keep.</h2>
+      <p class="sub">Between the recording and the code sits a YAML spec. Rename tools, rewrite descriptions, switch tools off. Record more later and analyze again: new operations are merged in, and your edits stay.</p>
+      <div class="split">
+        <div class="term">
+          <div class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">nas.spec.yaml · excerpt</span></div>
+<pre class="yaml" tabindex="0" aria-label="An excerpt of a spec file"><span class="c"># har2mcp spec. Edit freely: rerunning 'har2mcp analyze' keeps your changes to
+# tool names, descriptions, enabled, kind and inputs, and to the auth block.</span>
+<span class="k">har2mcp:</span> <span class="n">1</span>
+<span class="k">service:</span>
+  <span class="k">name:</span> nas
+  <span class="k">base_url:</span> http://192.168.1.10
+<span class="k">auth:</span>
+  <span class="k">mode:</span> http
+  <span class="k">login:</span>
+    <span class="k">request:</span>
+      <span class="k">method:</span> POST
+      <span class="k">path:</span> /login
+      <span class="k">body_type:</span> json
+      <span class="k">body:</span>
+        <span class="k">pwd:</span> <span class="ph">'{{password}}'</span>
+        <span class="k">user:</span> <span class="ph">'{{username}}'</span>
+  <span class="k">session:</span>
+    <span class="k">cookies:</span>
+      - PHPSESSID
+    <span class="k">tokens:</span>
+      - <span class="k">name:</span> csrf
+        <span class="k">from:</span>
+          <span class="k">response_json:</span> data.token
+        <span class="k">to:</span>
+          <span class="k">header:</span> X-Csrf-Token
+  <span class="k">relogin_on:</span>
+    - <span class="n">401</span>
+    - <span class="n">403</span>
+<span class="k">tools:</span>
+  - <span class="k">name:</span> add_share
+    <span class="k">description:</span> Add share. Calls POST /module/api.php (act=addshare). Recorded from the 'Create' control.
+    <span class="k">enabled:</span> <span class="n">true</span>
+    <span class="k">kind:</span> change
+    <span class="k">request:</span>
+      <span class="k">method:</span> POST
+      <span class="k">path:</span> /module/api.php
+      <span class="k">body_type:</span> json
+      <span class="k">body:</span>
+        <span class="k">act:</span> addshare
+      <span class="k">discriminator:</span> act
+    <span class="k">inputs:</span>
+      - <span class="k">name:</span> name
+        <span class="k">type:</span> string
+        <span class="k">description:</span> Share name
+        <span class="k">required:</span> <span class="n">true</span>
+        <span class="k">in:</span> body
+        <span class="k">field:</span> name
+        <span class="k">example:</span> media
+    <span class="c"># … response, source, generated</span>
+  - <span class="k">name:</span> delete_share
+    <span class="k">description:</span> Delete share. Calls POST /module/api.php (act=delshare). Recorded from the 'Delete' control.
+    <span class="k">enabled:</span> <span class="off">false</span>
+    <span class="k">kind:</span> destructive
+    <span class="c"># … request, inputs, response, source</span></pre>
+        </div>
+        <div>
+          <h3 class="minor">What you can change, and what it does</h3>
+          <ul class="plays">
+            <li><code>name</code><span>The tool name Claude sees. Yours to change.</span></li>
+            <li><code>description</code><span>What Claude reads to pick a tool. Write it by hand, or let <code>enhance</code> suggest one.</span></li>
+            <li><code>enabled</code><span><code>false</code> leaves the tool out of the server. Here <code>delete_share</code> was switched off by hand.</span></li>
+            <li><code>kind</code><span><code>read</code>, <code>change</code> or <code>destructive</code>: MCP hints for the client, never a block.</span></li>
+            <li><code>inputs</code><span>What Claude fills in: values you typed, or values that changed between samples.</span></li>
+            <li><code>{{password}}</code><span>Placeholders where your login went. The real values come from environment variables when the server runs.</span></li>
+          </ul>
+          <p class="note">This excerpt is from the example in <a href="https://github.com/donaldsteele/har2mcp/blob/main/docs/spec-format.md">docs/spec-format.md</a>, which describes every field. The NAS and its API are made up for the example.</p>
+        </div>
+      </div>
+      <div class="cards three spec-cards">
+        <article class="card"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-git-merge"></use></svg><h3>Merges, never wipes</h3><p>Analyzing into an existing spec keeps your names, descriptions, <code>enabled</code> switches, kinds, inputs and auth edits. New operations are added and missing ones are kept.</p></article>
+        <article class="card"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-flag"></use></svg><h3>Flags its guesses</h3><p>When analysis isn't sure, say a value seen only once that matches nothing you typed, it marks the tool <code>review: true</code> and notes which field to check.</p></article>
+        <article class="card"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-sparkles"></use></svg><h3>Optional: ask Claude</h3><p><code>har2mcp enhance</code> sends the tool list, never the login or the recording, and writes back better names and descriptions only. <code>--dry-run</code> prints exactly what would be sent.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="band claude-band" id="claude">
+    <div class="wrap">
+      <p class="eyebrow">Connect Claude</p>
+      <h2>Talk to your NAS.</h2>
+      <p class="sub">The generated server is a Model Context Protocol server over stdio. Register it with Claude Code or Claude Desktop and every enabled tool appears, with the device's address and login read from environment variables.</p>
+      <div class="split">
+        <div>
+          <div class="term">
+            <div class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">Terminal · Claude Code</span></div>
+            <div class="cmd"><code><span class="prompt">$</span>claude mcp add --transport stdio --env NAS_URL=http://192.168.1.10 --env NAS_USER=admin --env NAS_PASSWORD=your-password nas -- /path/to/nas-mcp/nas-mcp</code><button type="button" class="copybtn" data-copy="claude mcp add --transport stdio --env NAS_URL=http://192.168.1.10 --env NAS_USER=admin --env NAS_PASSWORD=your-password nas -- /path/to/nas-mcp/nas-mcp" aria-label="Copy the Claude Code command">Copy</button></div>
+            <div class="cmd"><code><span class="prompt">$</span>claude mcp list</code><button type="button" class="copybtn" data-copy="claude mcp list" aria-label="Copy the list command">Copy</button></div>
+            <div class="out ask"><code><span class="cmt"># example request</span></code></div>
+            <div class="out ask"><code><span class="you">&gt;</span>Make a share called backups and put report.pdf in it.</code></div>
+            <div class="out"><code><span class="tool">add_share</span> <span class="arg">{name: "backups"}</span> → {"ok":true}
+<span class="tool">upload_file</span> <span class="arg">{local_path: "report.pdf", path: "/backups"}</span> → <span class="ok">{"path": "…/report.pdf", "bytes": 48213, "content_type": "application/pdf"}</span></code></div>
+          </div>
+          <p class="note">Claude Desktop and other clients: add a stdio server whose command is the built program, with the same environment variables. The generated README has a ready <code>claude_desktop_config.json</code> snippet, and <a href="https://github.com/donaldsteele/har2mcp/blob/main/docs/generated-servers.md">docs/generated-servers.md</a> has the details.</p>
+        </div>
+        <div>
+          <h3 class="minor">Tools from the example recording</h3>
+          <ul class="plays">
+            <li><code>list_disks</code><span>Disks with model, size and health</span><em class="kind read">read</em></li>
+            <li><code>add_share</code><span>Create a share by name</span><em class="kind change">change</em></li>
+            <li><code>delete_share</code><span>Delete a share by name</span><em class="kind destructive">destructive</em></li>
+            <li><code>upload_file</code><span>Stream a file from the files folder to the NAS</span><em class="kind change">change</em></li>
+            <li><code>download_file</code><span>Stream a file from the NAS into the files folder</span><em class="kind read">read</em></li>
+            <li class="never"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-ban"></use></svg><span><b>Never:</b> file contents in MCP messages. Uploads and downloads go through <code>NAS_FILES_DIR</code> and return only the path, size and content type, so big files never pass through Claude.</span></li>
+          </ul>
+          <p class="note">Tool names come from your step names. The server logs in on the first call, logs in again and retries once when the session expires, and caps each result at 100000 bytes.</p>
+        </div>
+      </div>
+      <ul class="envs" aria-label="Environment variables of the generated server">
+        <li><b>NAS_URL</b>The device's address</li>
+        <li><b>NAS_USER</b>Username to log in with</li>
+        <li><b>NAS_PASSWORD</b>Password to log in with</li>
+        <li><b>NAS_INSECURE</b><code>1</code> accepts a self-signed certificate</li>
+        <li><b>NAS_FILES_DIR</b>File tools' folder; default <code>~/har2mcp-files/nas</code></li>
+      </ul>
+      <p class="note">The prefix is your service name in upper case: a spec named <code>router</code> gives <code>ROUTER_URL</code>, <code>ROUTER_USER</code> and so on.</p>
+    </div>
+  </section>
+
+  <section class="band" id="fit">
+    <div class="wrap">
+      <p class="eyebrow">What it fits</p>
+      <h2>What it works on, and what it doesn't.</h2>
+      <p class="sub">har2mcp learns from the calls you make while recording. It suits a web page that is a JavaScript app talking to its device over HTTP, and it can't get past things designed to stop automation.</p>
+      <div class="fit">
+        <div class="good">
+          <h3><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg>Good fit</h3>
+          <ul>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>JSON or XML APIs</b> behind a JavaScript web page: NAS boxes, routers, home-automation hubs, admin panels, most self-hosted apps.</span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>RPC-style endpoints,</b> one URL with an action field such as <code>act</code> or <code>method</code>, split into one tool per action. GraphQL fits the same way.</span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>Username and password logins,</b> including ones where the page scrambles the password before sending it: the generated server then logs in through headless Chrome.</span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>Cookies, CSRF tokens and bearer tokens,</b> copied from response to request by the server.</span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>Self-signed certificates,</b> common on home networks: <code>--insecure</code> to record, <code>NAS_INSECURE=1</code> to run.</span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>Uploads and downloads,</b> streamed through a local folder on the machine that runs the server.</span></li>
+          </ul>
+        </div>
+        <div class="poor">
+          <h3><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg>Poor fit, or no fit</h3>
+          <ul>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>Bot protection,</b> such as Cloudflare challenges and CAPTCHAs.</span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>Requests signed by secret JavaScript,</b> common on large consumer sites.</span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>A fresh MFA or 2FA code at every login.</b></span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>Single sign-on redirects,</b> such as "Sign in with Google".</span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>WebSocket-only apps.</b> WebSocket traffic is recorded, but not turned into tools in v0.1.</span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>Server-rendered HTML,</b> where each action loads a new page instead of calling an API.</span></li>
+          </ul>
+        </div>
+      </div>
+      <p class="honest"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-info"></use></svg><span><b>Where v0.1 stands:</b> the test suite runs the whole pipeline (record, analyze, generate, build, then MCP calls including an upload and a download) against a simulated TOS-style NAS, and CI runs it on Linux, macOS and Windows. It has not yet been checked against a real TerraMaster or any other real device. It only knows the calls you made while recording, and it doesn't scan the web app for others.</span></p>
+      <p class="honest warn"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-triangle-alert"></use></svg><span><b>Your devices, your accounts.</b> Large consumer sites often forbid automated access in their terms, and using har2mcp there can get an account banned. It is built for devices and services you own or run.</span></p>
+    </div>
+  </section>
+
+  <section class="band" id="security">
+    <div class="wrap">
+      <p class="eyebrow">Security</p>
+      <h2>Local first. Secrets stay out of the code.</h2>
+      <p class="sub">A recording holds your password; the spec and the generated server never do. Here is what har2mcp protects, and what it leaves to you.</p>
+      <ul class="safety">
+        <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-wifi-off"></use></svg><span><b>Offline by default.</b> Nothing leaves your machine unless you run <code>har2mcp enhance</code>. It sends the tool list only, never the recording, the auth block, headers or credentials, and <code>--dry-run</code> prints the exact payload.</span></li>
+        <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-key-round"></use></svg><span><b>No secrets in the spec or the code.</b> The login request uses <code>{{username}}</code> and <code>{{password}}</code> placeholders, tokens are redacted from examples, and the server reads the address and login from environment variables when it runs.</span></li>
+        <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-file-lock"></use></svg><span><b>Recordings stay private.</b> They are written owner-only (mode 0600) with a warning. <code>har2mcp redact</code> makes a copy without passwords, cookies and tokens, and <code>har2mcp inspect</code> prints a summary you can paste into an issue.</span></li>
+        <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-shield-check"></use></svg><span><b>A throwaway browser.</b> Every recording starts a new profile in a temporary folder and deletes it afterwards. Your real browser profile is never touched.</span></li>
+        <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-folder-lock"></use></svg><span><b>Files stay in one folder.</b> Upload and download tools only use <code>&lt;P&gt;_FILES_DIR</code>. Paths that escape it through <code>..</code>, an absolute path or a symlink are refused, and nothing is read or written.</span></li>
+        <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-lock"></use></svg><span><b>TLS checks stay on</b> unless you ask: <code>--insecure</code> for the recorder, <code>&lt;P&gt;_INSECURE=1</code> for the server.</span></li>
+      </ul>
+      <div class="after-grid">
+        <p class="honest warn"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-triangle-alert"></use></svg><span><b>Full control is the default.</b> Every recorded operation becomes a tool and is switched on, including the ones that delete, format or reboot. The read-only and destructive hints inform the MCP client and block nothing. Set <code>enabled: false</code> in the spec on anything Claude shouldn't do, then generate again.</span></p>
+        <p class="honest"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-info"></use></svg><span><b>Your MCP client keeps the device password</b> from those environment variables in its configuration file, as plain text. If the device lets you make a second account with only the rights Claude needs, use that. To report a vulnerability, see <a href="https://github.com/donaldsteele/har2mcp/blob/main/SECURITY.md">SECURITY.md</a>.</span></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="download">
+    <div class="wrap">
+      <p class="eyebrow">Download</p>
+      <h2>One binary. Unzip it and record.</h2>
+      <p class="sub">Pick your system from the latest release. Each zip holds <code>har2mcp</code>, the README, <code class="nw">HOW-TO-OPEN.txt</code>, <code>LICENSE</code> and <code>NOTICE</code>. To record you need Chrome, Edge or Chromium; to build the server it generates you need <a href="https://go.dev/dl/">Go</a> 1.26 or later.</p>
+      <div class="dl">
+        <div class="plat">
+          <h3><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-monitor"></use></svg>Windows</h3>
+          <div class="btns">
+            <a class="button primary" href="https://github.com/donaldsteele/har2mcp/releases/latest">Most PCs <small>…_windows_amd64.zip</small></a>
+            <a class="button ghost" href="https://github.com/donaldsteele/har2mcp/releases/latest">Windows on ARM <small>…_windows_arm64.zip</small></a>
+          </div>
+          <p><b>SmartScreen</b> may say “Windows protected your PC” because har2mcp is not code-signed: click More info, then Run anyway, or tick Unblock in the zip's Properties before extracting. Run it from PowerShell or Command Prompt.</p>
+        </div>
+        <div class="plat">
+          <h3><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-laptop"></use></svg>macOS</h3>
+          <div class="btns">
+            <a class="button primary" href="https://github.com/donaldsteele/har2mcp/releases/latest">Apple chip <small>…_darwin_arm64.zip</small></a>
+            <a class="button ghost" href="https://github.com/donaldsteele/har2mcp/releases/latest">Intel chip <small>…_darwin_amd64.zip</small></a>
+          </div>
+          <p><b>Gatekeeper</b> blocks unsigned programs: in Terminal, run <code>xattr -d com.apple.quarantine har2mcp</code> in the unzipped folder, or allow it under System Settings &gt; Privacy &amp; Security.</p>
+        </div>
+        <div class="plat">
+          <h3><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-terminal"></use></svg>Linux</h3>
+          <div class="btns">
+            <a class="button primary" href="https://github.com/donaldsteele/har2mcp/releases/latest">Linux PC <small>…_linux_amd64.zip</small></a>
+            <a class="button ghost" href="https://github.com/donaldsteele/har2mcp/releases/latest">ARM, Raspberry Pi 4/5 <small>…_linux_arm64.zip</small></a>
+          </div>
+          <p>Unzip and run <code>./har2mcp version</code> (<code>chmod +x har2mcp</code> if needed). Recording opens a browser window, so run <code>record</code> on a machine with a desktop; the other commands work anywhere.</p>
+        </div>
+        <div class="plat">
+          <h3><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-package"></use></svg>With Go</h3>
+          <div class="term"><div class="cmd"><code><span class="prompt">$</span>go install github.com/donaldsteele/har2mcp/cmd/har2mcp@latest</code><button type="button" class="copybtn" data-copy="go install github.com/donaldsteele/har2mcp/cmd/har2mcp@latest" aria-label="Copy the go install command">Copy</button></div></div>
+          <p>Builds and installs the latest release into your Go bin folder. Needs Go 1.26 or later, which you need anyway to build the generated servers.</p>
+        </div>
+      </div>
+      <p class="sums"><a href="https://github.com/donaldsteele/har2mcp/releases/latest/download/SHA256SUMS"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-list-checks"></use></svg>SHA256SUMS</a><a href="https://github.com/donaldsteele/har2mcp/blob/main/HOW-TO-OPEN.txt"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-info"></use></svg>HOW-TO-OPEN.txt</a><a href="https://github.com/donaldsteele/har2mcp/releases/latest"><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-external-link"></use></svg>Latest release</a></p>
+      <ol class="steps">
+        <li><b>Download and check</b> the zip for your system against <code>SHA256SUMS</code>, unzip it, and put <code>har2mcp</code> on your <code>PATH</code>.</li>
+        <li><b>Record</b> with <code>har2mcp record &lt;url&gt;</code>: log in, then name each action in the har2mcp box. Close the window when done.</li>
+        <li><b>Analyze, generate, build,</b> then register the server with Claude. The README walks through each command.</li>
+      </ol>
+      <p class="sub small">Guides: <a href="https://github.com/donaldsteele/har2mcp#readme">README</a>, <a href="https://github.com/donaldsteele/har2mcp/blob/main/docs/recording.md">recording</a>, <a href="https://github.com/donaldsteele/har2mcp/blob/main/docs/spec-format.md">spec format</a>, <a href="https://github.com/donaldsteele/har2mcp/blob/main/docs/generated-servers.md">generated servers</a>, <a href="https://github.com/donaldsteele/har2mcp/blob/main/docs/troubleshooting.md">troubleshooting</a>, <a href="https://github.com/donaldsteele/har2mcp/blob/main/CHANGELOG.md">changelog</a>. Build from source with <code>go build ./cmd/har2mcp</code>.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="wordmark small"><img class="logo" src="assets/favicon.svg" alt="" width="24" height="24">har2mcp</span>
+    <span class="fine">Apache-2.0. A sibling of <a href="https://donaldsteele.github.io/netdiag/">netdiag</a>, <a href="https://donaldsteele.github.io/bubbles/">bubbles</a> and <a href="https://donaldsteele.github.io/rocket/">rocket</a>. Fonts: Inter and JetBrains Mono (SIL OFL). Icons: Lucide (ISC).</span>
+    <nav aria-label="Footer"><a href="https://github.com/donaldsteele/har2mcp">GitHub</a><a href="https://github.com/donaldsteele/har2mcp/releases">Releases</a><a href="https://github.com/donaldsteele/har2mcp/tree/main/docs">Docs</a><a href="https://donaldsteele.github.io/netdiag/">netdiag</a><a href="https://donaldsteele.github.io/bubbles/">bubbles</a><a href="https://donaldsteele.github.io/rocket/">rocket</a></nav>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>
