@@ -59,7 +59,7 @@ func TestFindBrowser(t *testing.T) {
 		{"linux PATH", "linux", envMap(nil), existsIn(), lookIn(map[string]string{"chromium-browser": "/usr/local/bin/chromium-browser"}), "/usr/local/bin/chromium-browser"},
 		{"windows edge only", "windows", winEnv, existsIn(winEdge), none, winEdge},
 		{"windows chrome before edge", "windows", winEnv, existsIn(winEdge, winChrome), none, winChrome},
-		{"windows PATH", "windows", winEnv, existsIn(), lookIn(map[string]string{"msedge.exe": "/x/msedge.exe"}), "/x/msedge.exe"},
+		{"windows PATH", "windows", winEnv, existsIn(), lookIn(map[string]string{"msedge.exe": `C:\x\msedge.exe`}), `C:\x\msedge.exe`},
 		{"mac chrome", "darwin", macEnv, existsIn(macEdge, macHomeCr, macChrome), none, macChrome},
 		{"mac per-user chromium", "darwin", macEnv, existsIn(macEdge, macHomeCr), none, macHomeCr},
 		{"mac edge", "darwin", macEnv, existsIn(macEdge), none, macEdge},

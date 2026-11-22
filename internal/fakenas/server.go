@@ -26,6 +26,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"slices"
 	"sync"
 	"time"
@@ -144,6 +145,26 @@ func (s *Server) Rebooted() bool {
 	return s.rebooted
 }
 
+// staticContentTypes pins the types of the SPA's assets. The file server
+// would otherwise ask the OS: Windows reports .js as application/javascript
+// (or whatever the registry says), so recordings would differ by platform.
+var staticContentTypes = map[string]string{
+	".js":  "text/javascript; charset=utf-8",
+	".css": "text/css; charset=utf-8",
+	".png": "image/png",
+}
+
+// staticTypes sets Content-Type from staticContentTypes before the file
+// server runs; http.ServeContent keeps a type that is already set.
+func staticTypes(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ct, ok := staticContentTypes[path.Ext(r.URL.Path)]; ok {
+			w.Header().Set("Content-Type", ct)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) handler() http.Handler {
 	static, err := fs.Sub(staticFiles, "static")
 	if err != nil {
@@ -151,7 +172,7 @@ func (s *Server) handler() http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/{$}", s.serveIndex)
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
+	mux.Handle("GET /static/", staticTypes(http.StripPrefix("/static/", http.FileServerFS(static))))
 	mux.HandleFunc("/api/nonce", s.handleNonce)
 	mux.HandleFunc("/api/login", s.handleLogin)
 	mux.HandleFunc("/api.php", s.handleAct)

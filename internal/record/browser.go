@@ -94,8 +94,13 @@ func findBrowser(goos string, env func(string) string, exists func(string) bool,
 	}
 	for _, n := range names {
 		if p, err := lookPath(n); err == nil && p != "" {
-			if abs, err := filepath.Abs(p); err == nil {
-				p = abs
+			// Only resolve relative paths for the OS we run on: filepath.Abs
+			// uses the host's rules, and a path found for another goos (in
+			// tests) must come back unchanged.
+			if goos == runtime.GOOS && !filepath.IsAbs(p) {
+				if abs, err := filepath.Abs(p); err == nil {
+					p = abs
+				}
 			}
 			return p, nil
 		}
