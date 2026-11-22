@@ -19,16 +19,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  # Upload and deploy are separate jobs, as in GitHub's starter workflow.
+  # In one job, deploy-pages can ask for the artifact before GitHub has
+  # registered it ("No artifacts named github-pages"), and re-running that job
+  # uploads a second copy, which deploy-pages also rejects. As separate jobs,
+  # "Re-run failed jobs" re-runs only the deploy, against the one upload.
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v5
