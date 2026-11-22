@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en" data-scramble="0">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FakeNAS F4-424</title>
+<link rel="icon" href="/static/logo.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="bar">
+  <img src="/static/logo.png" alt="" width="28" height="28">
+  <span class="brand">FakeNAS <b>F4-424</b></span>
+  <span class="note">simulated TOS device for har2mcp tests</span>
+  <span id="status" class="status" aria-live="polite"></span>
+</header>
+
+<main>
+  <section id="login-view" class="card">
+    <h1>Sign in</h1>
+    <form id="login-form" autocomplete="on">
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" spellcheck="false">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password">
+      <button id="login" type="submit">Log in</button>
+    </form>
+  </section>
+
+  <section id="app-view" hidden>
+    <div class="card">
+      <h2>Storage</h2>
+      <div class="row">
+        <button id="btn-disks" type="button">Disks</button>
+        <button id="btn-sysinfo" type="button">System info</button>
+        <button id="btn-shares" type="button">Shares</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Shares</h2>
+      <ul id="share-list" class="list"></ul>
+      <label for="share-name">Share name</label>
+      <div class="row">
+        <input id="share-name" name="name" spellcheck="false">
+        <button id="btn-add-share" type="button">Add share</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Files</h2>
+      <label for="upload-path">Folder</label>
+      <input id="upload-path" name="path" value="/public" spellcheck="false">
+      <label for="upload-file">File</label>
+      <input id="upload-file" name="file" type="file">
+      <div class="row">
+        <button id="btn-upload" type="button">Upload</button>
+      </div>
+      <ul id="file-list" class="list"></ul>
+    </div>
+
+    <div class="card danger">
+      <h2>Power</h2>
+      <button id="btn-reboot" type="button" class="warn">Reboot</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Last response</h2>
+    <pre id="out" data-seq="0"></pre>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
