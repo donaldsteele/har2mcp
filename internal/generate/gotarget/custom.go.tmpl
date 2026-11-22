@@ -1,0 +1,29 @@
+package main
+
+import "github.com/modelcontextprotocol/go-sdk/mcp"
+
+// registerCustom is your hook for hand-written tools. har2mcp created this
+// file once and never overwrites it, so your changes survive 'har2mcp
+// generate'. It runs after the generated tools are registered.
+//
+// Add a tool with mcp.AddTool. A tool with the same name as a generated one
+// replaces it, and s.RemoveTools("name") drops a generated tool. c sends
+// requests with the login and session handled for you:
+//
+//	type RebootLaterInput struct {
+//		Minutes int64 `json:"minutes" jsonschema:"Minutes to wait before rebooting."`
+//	}
+//
+//	mcp.AddTool(s, &mcp.Tool{Name: "reboot_later", Description: "Reboot after a delay."},
+//		func(ctx context.Context, _ *mcp.CallToolRequest, in RebootLaterInput) (*mcp.CallToolResult, any, error) {
+//			status, body, _, err := c.Do(ctx, "POST", "/api.php", nil, "json",
+//				map[string]any{"act": "reboot", "delay": in.Minutes})
+//			if err != nil {
+//				return nil, nil, err
+//			}
+//			return &mcp.CallToolResult{
+//				Content: []mcp.Content{&mcp.TextContent{Text: string(body)}},
+//				IsError: status >= 400,
+//			}, nil, nil
+//		})
+func registerCustom(s *mcp.Server, c *Client) {}
