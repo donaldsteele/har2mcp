@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<!-- The social card (og:image and LinkedIn). Render from the repo root:
+  google-chrome --headless=new --hide-scrollbars --allow-file-access-from-files --force-device-scale-factor=2 \
+    --window-size=1200,627 --virtual-time-budget=2000 --screenshot=site/assets/social-card.png "file://$PWD/scripts/social-card.html"
+-->
+<meta charset="utf-8">
+<title>har2mcp social card</title>
+<style>
+@font-face{font-family:"Inter";src:url(../site/assets/fonts/Inter-Variable-latin.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:"JetBrains Mono";src:url(../site/assets/fonts/JetBrainsMono-latin-400.woff2) format("woff2");font-weight:400}
+@font-face{font-family:"JetBrains Mono";src:url(../site/assets/fonts/JetBrainsMono-latin-700.woff2) format("woff2");font-weight:700}
+:root{
+  --bg:#141110;--panel:#1c1917;--elev:#231f1d;--raised:#292524;
+  --line:#2f2a27;--line-strong:#4a433e;
+  --fg:#f5f0e8;--dim:#b8aea1;--faint:#8a8178;
+  --accent:#2dd4bf;--accent-hover:#5eead4;--ok:#34d399;--warn:#facc15;
+  --sans:Inter,system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;width:1200px;height:627px;overflow:hidden;background:var(--bg);color:var(--fg);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.card{position:relative;width:1200px;height:627px;padding:46px 56px 40px;
+  background:radial-gradient(700px 420px at 78% 40%,rgba(45,212,191,.10),transparent 70%),var(--bg)}
+.traces{position:absolute;inset:0;width:1200px;height:627px;z-index:0}
+.traces path{fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.traces .wire{stroke:var(--line)}
+.traces .sig{stroke:var(--accent);stroke-width:2.5;opacity:.85}
+.traces circle{fill:var(--bg);stroke:var(--accent);stroke-width:1.5}
+.top{position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between}
+.wordmark{font-family:var(--mono);font-weight:700;font-size:28px;letter-spacing:-.02em;display:flex;align-items:center;gap:13px}
+.wordmark img{width:44px;height:44px}
+.wordmark .caret{color:var(--accent);margin-left:-11px}
+.pill{display:inline-flex;align-items:center;gap:10px;border:1px solid var(--line-strong);background:var(--panel);border-radius:999px;padding:7px 16px;color:var(--dim);font-size:16px}
+.pill i{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(52,211,153,.18)}
+.body{position:relative;z-index:1;display:grid;grid-template-columns:600px 1fr;gap:40px;margin-top:46px;align-items:start}
+h1{margin:0 0 20px;font-size:58px;line-height:1.02;letter-spacing:-.04em;font-weight:740}
+h1 em{font-style:normal;background:linear-gradient(100deg,var(--accent),#a3e635);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{margin:0;font-size:22px;line-height:1.4;color:var(--dim);font-weight:450}
+.sub b{color:var(--fg);font-weight:600}
+.term{background:#0f0d0c;border:1px solid var(--line-strong);border-radius:14px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.55),0 0 0 6px rgba(45,212,191,.05)}
+.chrome{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.chrome .dot{width:11px;height:11px;border-radius:50%;background:var(--line-strong)}
+.chrome .title{margin-left:10px;font-family:var(--mono);font-size:13px;color:var(--faint)}
+.lines{padding:14px 18px 16px;font-family:var(--mono);font-size:16px;line-height:1.62;white-space:pre}
+.p{color:var(--accent);margin-right:10px}
+.c{color:var(--faint)}
+.ok{color:var(--ok)}
+.t{color:var(--fg)}
+.k{color:#a3e635}
+.devices{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.devices span{font-size:15px;color:var(--dim);border:1px solid var(--line-strong);background:var(--panel);border-radius:8px;padding:6px 11px}
+.foot{position:absolute;z-index:1;left:56px;right:56px;bottom:36px;display:flex;justify-content:space-between;align-items:center;font-size:17px;color:var(--faint)}
+.foot .url{font-family:var(--mono);font-weight:700;font-size:20px;color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top">
+    <div class="wordmark"><img src="../site/assets/favicon.svg" alt="">har2mcp<span class="caret">&#x258D;</span></div>
+    <div class="pill"><i></i>Open source · Apache-2.0 · Windows, macOS &amp; Linux</div>
+  </div>
+
+  <div class="body">
+    <div>
+      <h1>Turn your device&#39;s web page into an <em>MCP&nbsp;server</em>.</h1>
+      <p class="sub">No official API for your NAS, router or camera? Its admin page calls one. Use the page once, naming each step, and <b>har2mcp</b> writes a Go MCP server so <b>Claude</b> can do the same.</p>
+    </div>
+    <div>
+      <div class="term">
+        <div class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="title">from web page to MCP server</span></div>
+<div class="lines"><span class="p">$</span><span class="t">har2mcp record http://nas.local</span>
+<span class="c">  name each step as you click</span>
+<span class="p">$</span><span class="t">har2mcp analyze nas.har --name nas</span>
+<span class="c">  login, session, one tool per action</span>
+<span class="p">$</span><span class="t">har2mcp generate nas.spec.yaml</span>
+<span class="ok">✓</span><span class="t"> nas-mcp/  </span><span class="c">go build, then</span>
+<span class="p">$</span><span class="t">claude mcp add nas -- ./nas-mcp</span>
+<span class="k">  "List my disks and add a share"</span></div>
+      </div>
+      <div class="devices"><span>NAS</span><span>Routers</span><span>IP cameras</span><span>Smart plugs</span><span>UPS</span><span>Printers</span><span>Inverters</span></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="url">donaldsteele.github.io/har2mcp</span>
+    <span>Offline by default · passwords never in the code</span>
+  </div>
+</div>
+</body>
+</html>
