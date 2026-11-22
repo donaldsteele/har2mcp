@@ -56,8 +56,10 @@ Pass `--name`, for example `--name nas`.
 
 **Few or no tools.** Some possible causes:
 
-- The API lives on another host or port than the page. Add it with
-  `--host`, once per host.
+- The API lives on another host or port than the page. Analysis follows
+  the start page's redirects (`tplinkwifi.net` to `192.168.0.1`) and, when
+  the start host has no API calls, tries the host most calls went to. If
+  that is not enough, add the host with `--host`, once per host.
 - The device's pages are server-rendered HTML rather than a JavaScript app
   calling an API. v0.1 drops HTML documents.
 - The actions happened over WebSockets, which v0.1 records but doesn't turn
@@ -88,8 +90,18 @@ the field it's about, such as
 `tools[2] "add share": name must be lower case letters, digits and _ ...`.
 Unknown keys are reported too, so check for typos.
 
+**"The device's API answered at ..., not at the address you recorded".**
+The device redirected you, for example from `http://nas:8181` to
+`https://nas:5443`. The spec's `service.base_url` and the generated server
+use the address the API ran on. Use that address for `<P>_URL` too.
+
+**The note says my password is short or a common word.** With a password
+like `admin`, the same text appears in ordinary paths and values, so
+analysis only removed it where a whole value matched. Read the spec before
+you share it.
+
 **My edits were lost.** Merging keeps hand edits to `name`, `description`,
-`enabled`, `kind` and `inputs`, and to the `auth` block. Changes to
+`enabled`, `kind` and each input, and to the `auth` block. Changes to
 `request`, `response`, `source` and `file` are replaced by the new analysis.
 Put request changes you need to keep in `custom.go` instead.
 
@@ -128,7 +140,18 @@ session after rebuilding.
 **Every call fails with 401 or 403.** Check `<P>_URL`, `<P>_USER` and
 `<P>_PASSWORD`. Then look at the `auth` block in the spec: if
 `auth.review` is `true`, the login may need fixing by hand. If the device
-scrambles the password in the page, `auth.mode` must be `browser`.
+scrambles the password in the page, `auth.mode` must be `browser`. If the
+browser showed its own sign-in box, `auth.mode` should be `basic`. HTTP
+Digest authentication isn't supported.
+
+**"not tried again yet" after a failed login.** After a failed login the
+server waits 15 minutes before it contacts the device again (30 seconds
+after a network error), so a wrong password can't trip the device's lockout.
+Fix the settings and restart the server.
+
+**"The device redirected the login to ...".** The device moved the login to
+another address, for example from http to https. Set `<P>_URL` to the
+address in the message.
 
 **Certificate errors.** Set `<P>_INSECURE=1` for a device with a
 self-signed certificate.

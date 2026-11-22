@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,7 +73,7 @@ func runGenerate(args []string) error {
 		if s.Auth.Review {
 			flagged += " and the auth block"
 		}
-		fmt.Printf("Note: the spec flags %s for review; run 'har2mcp inspect %s' to see them.\n", flagged, pos[0])
+		fmt.Printf("Note: the spec flags %s for review; run 'har2mcp inspect %s' to see them.\n", flagged, quoteArg(pos[0]))
 	}
 	switch {
 	case *noTidy:
@@ -89,19 +90,32 @@ func runGenerate(args []string) error {
 	if err != nil {
 		binPath = filepath.Join(outDir, bin)
 	}
+	printNextSteps(os.Stdout, runtime.GOOS, s, outDir, bin, binPath)
+	return nil
+}
+
+// printNextSteps prints the commands that build the generated server and
+// register it with Claude Code, quoted for goos's shell so that paths with
+// spaces paste correctly.
+func printNextSteps(w io.Writer, goos string, s *spec.Spec, outDir, bin, binPath string) {
+	q := func(v string) string { return quoteArgFor(goos, v) }
 	p := s.EnvPrefix()
 	url := s.Service.BaseURL
 	if url == "" {
 		url = "http://192.168.1.10"
 	}
-	fmt.Printf("\nNext, build it:\n  cd %s\n  go build -o %s .\n\nThen register it with Claude Code:\n  claude mcp add --transport stdio --env %s_URL=%s", outDir, bin, p, url)
+	fmt.Fprintf(w, "\nNext, build it:\n  cd %s\n  go build -o %s .\n\nThen register it with Claude Code:\n  claude mcp add --transport stdio --env %s",
+		q(outDir), q(bin), q(p+"_URL="+url))
 	if s.Auth.Mode != "none" {
-		fmt.Printf(" --env %s_USER=your-user --env %s_PASSWORD='your-password'", p, p)
+		password := "'your-password'"
+		if goos == "windows" {
+			password = "your-password" // cmd.exe would keep the quotes in the value
+		}
+		fmt.Fprintf(w, " --env %s_USER=your-user --env %s_PASSWORD=%s", p, p, password)
 	}
-	fmt.Printf(" %s -- %s\n", s.Service.Name, binPath)
+	fmt.Fprintf(w, " %s -- %s\n", s.Service.Name, q(binPath))
 	if s.Auth.Mode == "browser" {
-		fmt.Println("\nThis device logs in through a browser: Chrome, Chromium or Edge must be installed where the server runs.")
+		fmt.Fprintln(w, "\nThis device logs in through a browser: Chrome, Chromium or Edge must be installed where the server runs.")
 	}
-	fmt.Fprintf(os.Stdout, "See %s for Claude Desktop and the other settings.\n", filepath.Join(outDir, "README.md"))
-	return nil
+	fmt.Fprintf(w, "See %s for Claude Desktop and the other settings.\n", filepath.Join(outDir, "README.md"))
 }

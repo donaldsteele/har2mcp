@@ -115,3 +115,13 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`: it runs the tests,
 builds the six zips with `scripts/build.sh`, checks them against
 `SHA256SUMS`, and publishes a GitHub release. A tag with a `-` in it (such as
 `v0.2.0-rc1`) is published as a pre-release.
+
+The site in `site/` is published by `.github/workflows/pages.yml` on every
+push to `main` that changes it. On a new repository (or a fork), switch
+GitHub Pages to build from GitHub Actions once, or the workflow fails with
+"Get Pages site failed":
+
+```sh
+gh api -X POST repos/<owner>/har2mcp/pages -f build_type=workflow
+gh workflow run pages.yml
+```

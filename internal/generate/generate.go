@@ -301,18 +301,22 @@ func buildData(s *spec.Spec, modPath string) (*goData, error) {
 	a := s.Auth
 	d.ReloginBodyContains = a.ReloginBodyContains
 	reloginOn := a.ReloginOn
-	if len(reloginOn) == 0 && a.Mode != "none" {
+	if len(reloginOn) == 0 && (a.Mode == "http" || a.Mode == "browser") {
 		reloginOn = []int{401, 403}
 	}
 	d.ReloginOnLit = intsLit(reloginOn)
 	d.SessionCookiesLit = stringsLit(a.Session.Cookies)
-	d.TokensLit = tokensLit(a.Session.Tokens)
 	skipHeaders := map[string]bool{}
 	for _, tf := range a.Session.Tokens {
 		if tf.To.Header != "" {
 			skipHeaders[strings.ToLower(tf.To.Header)] = true
 		}
 	}
+	tokens, err := tokensLit(a.Session.Tokens, skipHeaders)
+	if err != nil {
+		return nil, err
+	}
+	d.TokensLit = tokens
 
 	d.LoginLit = "(*operation)(nil)"
 	if a.Login != nil && a.Mode != "none" {
@@ -431,8 +435,8 @@ func operationLit(t *spec.Tool, skipHeaders map[string]bool, where string) (stri
 	if f := t.File; f != nil {
 		fmt.Fprintf(&b, "File: &fileOp{Direction: %s, Part: %s", strconv.Quote(f.Direction), strconv.Quote(f.Part))
 		if c := f.Chunked; c != nil {
-			fmt.Fprintf(&b, ", Chunk: &chunking{OffsetField: %s, TotalField: %s, IndexField: %s, Size: %d}",
-				strconv.Quote(c.OffsetField), strconv.Quote(c.TotalField), strconv.Quote(c.IndexField), c.ChunkSize)
+			fmt.Fprintf(&b, ", Chunk: &chunking{OffsetField: %s, TotalField: %s, IndexField: %s, Size: %d, IndexBase: %d}",
+				strconv.Quote(c.OffsetField), strconv.Quote(c.TotalField), strconv.Quote(c.IndexField), c.ChunkSize, c.IndexBase)
 		}
 		b.WriteString("},\n")
 	}
@@ -637,28 +641,37 @@ func stringsLit(v []string) string {
 	return "[]string{" + strings.Join(parts, ", ") + "}"
 }
 
-func tokensLit(flows []spec.TokenFlow) string {
+// tokensLit is the Go literal of the token flows, with the request each
+// token is read from when it is not the login response.
+func tokensLit(flows []spec.TokenFlow, skipHeaders map[string]bool) (string, error) {
 	if len(flows) == 0 {
-		return "[]tokenFlow(nil)"
+		return "[]tokenFlow(nil)", nil
 	}
 	var b strings.Builder
 	b.WriteString("[]tokenFlow{\n")
-	for _, tf := range flows {
+	for i, tf := range flows {
 		fmt.Fprintf(&b, "{Name: %s, From: %s, To: %s", strconv.Quote(tf.Name), tokenRefLit(tf.From), tokenRefLit(tf.To))
 		if tf.Prefix != "" {
 			fmt.Fprintf(&b, ", Prefix: %s", strconv.Quote(tf.Prefix))
 		}
+		if tf.Request != nil {
+			lit, err := operationLit(&spec.Tool{Request: *tf.Request}, skipHeaders, fmt.Sprintf("auth.session.tokens[%d].request", i))
+			if err != nil {
+				return "", err
+			}
+			fmt.Fprintf(&b, ", Request: %s", lit)
+		}
 		b.WriteString("},\n")
 	}
 	b.WriteString("}")
-	return b.String()
+	return b.String(), nil
 }
 
 func tokenRefLit(r spec.TokenRef) string {
 	var parts []string
 	for _, f := range []struct{ name, value string }{
-		{"ResponseJSON", r.ResponseJSON}, {"ResponseHeader", r.ResponseHeader}, {"Cookie", r.Cookie},
-		{"Header", r.Header}, {"Query", r.Query}, {"Body", r.Body},
+		{"ResponseJSON", r.ResponseJSON}, {"ResponseText", r.ResponseText}, {"ResponseHeader", r.ResponseHeader},
+		{"Cookie", r.Cookie}, {"Header", r.Header}, {"Query", r.Query}, {"Body", r.Body}, {"Path", r.Path},
 	} {
 		if f.value != "" {
 			parts = append(parts, f.name+": "+strconv.Quote(f.value))

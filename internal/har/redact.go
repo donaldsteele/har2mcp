@@ -5,93 +5,57 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
-	"unicode"
+	"unicode/utf8"
 )
 
 // Redact returns a deep copy of h with secrets replaced by Redacted. h is not
 // modified. These are removed:
 //
 //   - the Cookie, Set-Cookie and Authorization headers, and every header whose
-//     name contains token, csrf, session or auth (case-insensitive)
+//     name contains token, csrf, session, auth, secret, password or an
+//     API-key word (case-insensitive; see IsSecretHeader)
 //   - every cookie value
-//   - the captured login password and every typed input of type "password"
+//   - the captured login password and every typed input that holds a secret
+//     (a password field, or one labeled as a password, key, PSK or PIN; see
+//     IsSecretInput)
 //   - those passwords wherever they appear in URLs, query strings, bodies
-//     and headers, raw or URL- or JSON-encoded
-//   - JSON body fields (request, response and WebSocket, any depth, any case)
-//     named password, passwd, pwd, pass, token or csrf, or whose name contains
-//     password, passwd, token, csrf, secret or a session-id or API-key word;
-//     form and query fields with those names are redacted too
+//     and headers, raw or URL- or JSON-encoded. A short or common password,
+//     such as "admin", is also an ordinary word in paths and values, so it
+//     is removed only where a whole value equals it (see Distinctive).
+//   - JSON body fields (request, response and WebSocket, any depth, any case),
+//     form fields and query parameters with a secret name: password, token,
+//     csrf, sid, stok, pin, psk and the like (see IsSecretField)
 //   - the values found in all of the above (session ids, CSRF tokens, bearer
 //     tokens) wherever else they appear, when they look like secrets: at least
 //     6 characters with a digit, or at least 12 characters
+//   - session tokens whatever their name: a value a response handed out that
+//     a later request sends back in its URL path or a header (an OpenWrt
+//     ";stok=<token>" path segment, a token from an XML response sent in a
+//     header), or, for text, XML and HTML responses, anywhere in a later
+//     request
 func Redact(h *HAR) *HAR {
 	if h == nil {
 		return nil
 	}
 	out := copyHAR(h)
-	r := &redactor{}
+	r := &redactor{secrets: map[string]bool{}, weak: map[string]bool{}}
 	r.collect(out)
 	r.apply(out)
 	return out
 }
 
-var (
-	secretHeaderWords = []string{"token", "csrf", "session", "auth", "secret", "password", "api-key", "apikey"}
-	secretFieldExact  = map[string]bool{"password": true, "passwd": true, "pwd": true, "pass": true, "token": true, "csrf": true}
-	secretFieldWords  = []string{"password", "passwd", "token", "csrf", "secret", "sessid", "sessionid", "session_id", "apikey", "api_key"}
-)
-
-func isSecretHeader(name string) bool {
-	n := strings.ToLower(name)
-	if n == "cookie" || n == "set-cookie" {
-		return true
-	}
-	for _, w := range secretHeaderWords {
-		if strings.Contains(n, w) {
-			return true
-		}
-	}
-	return false
-}
-
-func isSecretField(name string) bool {
-	n := strings.ToLower(name)
-	if secretFieldExact[n] {
-		return true
-	}
-	for _, w := range secretFieldWords {
-		if strings.Contains(n, w) {
-			return true
-		}
-	}
-	return false
-}
-
-// looksSecret reports whether a value found in a secret place is distinctive
-// enough to scrub everywhere else without mangling ordinary text.
-func looksSecret(v string) bool {
-	if v == Redacted || len(v) < 6 {
-		return false
-	}
-	if len(v) >= 12 {
-		return true
-	}
-	return strings.IndexFunc(v, unicode.IsDigit) >= 0
-}
-
 type redactor struct {
-	secrets map[string]bool
-	list    []string // longest first
+	secrets map[string]bool // removed wherever they appear
+	weak    map[string]bool // short or common passwords: removed where a whole value equals them
+	list    []string        // secrets, longest first
 }
 
 func (r *redactor) addAlways(v string) {
 	if v == "" || v == Redacted {
 		return
-	}
-	if r.secrets == nil {
-		r.secrets = map[string]bool{}
 	}
 	r.secrets[v] = true
 	r.secrets[url.QueryEscape(v)] = true
@@ -101,9 +65,22 @@ func (r *redactor) addAlways(v string) {
 	}
 }
 
+// addPassword records a password: everywhere when it is distinctive, else
+// only as a whole value.
+func (r *redactor) addPassword(v string) {
+	if v == "" || v == Redacted {
+		return
+	}
+	if Distinctive(v) {
+		r.addAlways(v)
+		return
+	}
+	r.weak[v] = true
+}
+
 func (r *redactor) addFound(v string) {
 	v = strings.TrimSpace(v)
-	if looksSecret(v) {
+	if LooksSecret(v) {
 		r.addAlways(v)
 	}
 }
@@ -112,12 +89,12 @@ func (r *redactor) addFound(v string) {
 func (r *redactor) collect(h *HAR) {
 	if m := h.Log.Har2mcp; m != nil {
 		if m.Login != nil {
-			r.addAlways(m.Login.Password)
+			r.addPassword(m.Login.Password)
 		}
 		for _, s := range m.Steps {
 			for _, in := range s.Inputs {
-				if strings.EqualFold(in.Type, "password") {
-					r.addAlways(in.Value)
+				if IsSecretInput(in) {
+					r.addPassword(in.Value)
 				}
 			}
 		}
@@ -132,14 +109,20 @@ func (r *redactor) collect(h *HAR) {
 			r.addFound(c.Value)
 		}
 		for _, q := range e.Request.QueryString {
-			if isSecretField(q.Name) {
+			if IsSecretField(q.Name) {
 				r.addFound(q.Value)
+				if IsPasswordField(q.Name) {
+					r.addPassword(q.Value)
+				}
 			}
 		}
 		if pd := e.Request.PostData; pd != nil {
 			for _, p := range pd.Params {
-				if isSecretField(p.Name) {
+				if IsSecretField(p.Name) {
 					r.addFound(p.Value)
+					if IsPasswordField(p.Name) {
+						r.addPassword(p.Value)
+					}
 				}
 			}
 			r.collectBody([]byte(pd.Text), pd.MimeType)
@@ -151,6 +134,7 @@ func (r *redactor) collect(h *HAR) {
 			r.collectBody([]byte(m.Data), "")
 		}
 	}
+	r.collectReturnedTokens(h)
 	for s := range r.secrets {
 		r.list = append(r.list, s)
 	}
@@ -162,9 +146,144 @@ func (r *redactor) collect(h *HAR) {
 	})
 }
 
+// tokenRE finds the token-like words in a text: runs of letters, digits,
+// "-" and "_".
+var tokenRE = regexp.MustCompile(`[A-Za-z0-9_-]{8,}`)
+
+// maxTokenScan bounds how much of one response body is searched for tokens.
+const maxTokenScan = 1 << 20
+
+// collectReturnedTokens finds session tokens by how they are used rather
+// than by name: values a response handed out that a later request sends
+// back. A value from a JSON response counts when it comes back in a URL
+// path segment (whole, or after "=" as in ";stok=<token>") or a header,
+// because JSON responses also list items whose ids later requests send in
+// their bodies. A value from a text, XML or HTML response counts wherever
+// it comes back.
+func (r *redactor) collectReturnedTokens(h *HAR) {
+	order := make([]int, len(h.Log.Entries))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		return h.Log.Entries[order[a]].StartedDateTime.Before(h.Log.Entries[order[b]].StartedDateTime)
+	})
+	type origin struct{ text bool }
+	seen := map[string]origin{}
+	for _, i := range order {
+		e := &h.Log.Entries[i]
+		if len(seen) > 0 {
+			for _, v := range pathAndHeaderValues(e) {
+				if _, ok := seen[v]; ok {
+					r.addFound(v)
+				}
+			}
+			for _, v := range otherRequestValues(e) {
+				if o, ok := seen[v]; ok && o.text {
+					r.addFound(v)
+				}
+			}
+		}
+		if e.Response.Content.Truncated {
+			continue
+		}
+		b, err := e.Response.Content.Bytes()
+		if err != nil || len(b) == 0 || len(b) > maxTokenScan {
+			continue
+		}
+		if v, ok := parseJSON(b); ok {
+			walkStringLeaves(v, func(s string) {
+				for _, t := range append([]string{s}, tokenRE.FindAllString(s, -1)...) {
+					if tokenish(t) {
+						if _, dup := seen[t]; !dup {
+							seen[t] = origin{}
+						}
+					}
+				}
+			})
+			continue
+		}
+		if !utf8.Valid(b) {
+			continue
+		}
+		for _, t := range tokenRE.FindAllString(string(b), -1) {
+			if tokenish(t) {
+				seen[t] = origin{text: true}
+			}
+		}
+	}
+}
+
+// pathAndHeaderValues lists the values a request sends in its URL path
+// segments (whole, and the part after the last "=") and its headers (whole,
+// and the part after the last space, as in "Bearer <token>").
+func pathAndHeaderValues(e *Entry) []string {
+	var out []string
+	if u, err := url.Parse(e.Request.URL); err == nil {
+		for _, seg := range strings.Split(u.EscapedPath(), "/") {
+			if s, err := url.PathUnescape(seg); err == nil {
+				seg = s
+			}
+			out = append(out, seg)
+			if i := strings.LastIndexByte(seg, '='); i >= 0 {
+				out = append(out, seg[i+1:])
+			}
+		}
+	}
+	for _, h := range e.Request.Headers {
+		v := strings.TrimSpace(h.Value)
+		out = append(out, v)
+		if i := strings.LastIndexByte(v, ' '); i >= 0 {
+			out = append(out, v[i+1:])
+		}
+	}
+	return out
+}
+
+// otherRequestValues lists the token-like words in a request's query string
+// and body.
+func otherRequestValues(e *Entry) []string {
+	var out []string
+	if u, err := url.Parse(e.Request.URL); err == nil && u.RawQuery != "" {
+		if q, err := url.QueryUnescape(u.RawQuery); err == nil {
+			out = append(out, tokenRE.FindAllString(q, -1)...)
+		}
+	}
+	if pd := e.Request.PostData; pd != nil {
+		text := pd.Text
+		if len(text) > maxTokenScan {
+			text = text[:maxTokenScan]
+		}
+		if u, err := url.QueryUnescape(text); err == nil {
+			text = u
+		}
+		out = append(out, tokenRE.FindAllString(text, -1)...)
+		for _, p := range pd.Params {
+			out = append(out, tokenRE.FindAllString(p.Value, -1)...)
+		}
+	}
+	return out
+}
+
+// walkStringLeaves calls fn with every string in a decoded JSON value.
+func walkStringLeaves(v any, fn func(string)) {
+	switch x := v.(type) {
+	case string:
+		fn(x)
+	case map[string]any:
+		for _, val := range x {
+			walkStringLeaves(val, fn)
+		}
+	case []any:
+		for _, val := range x {
+			walkStringLeaves(val, fn)
+		}
+	}
+}
+
 func (r *redactor) collectHeaders(hs []NameValue) {
 	for _, h := range hs {
-		if !isSecretHeader(h.Name) {
+		if !IsSecretHeader(h.Name) {
 			continue
 		}
 		switch strings.ToLower(h.Name) {
@@ -192,15 +311,23 @@ func (r *redactor) collectHeaders(hs []NameValue) {
 
 func (r *redactor) collectBody(b []byte, mime string) {
 	if v, ok := parseJSON(b); ok {
-		walkSecretFields(v, func(s string) { r.addFound(s) })
+		walkSecretFields(v, func(name, s string) {
+			r.addFound(s)
+			if IsPasswordField(name) {
+				r.addPassword(s)
+			}
+		})
 		return
 	}
 	if isForm(mime) {
 		for _, pair := range strings.Split(string(b), "&") {
 			k, v, _ := strings.Cut(pair, "=")
-			if name, err := url.QueryUnescape(k); err == nil && isSecretField(name) {
+			if name, err := url.QueryUnescape(k); err == nil && IsSecretField(name) {
 				if val, err := url.QueryUnescape(v); err == nil {
 					r.addFound(val)
+					if IsPasswordField(name) {
+						r.addPassword(val)
+					}
 				}
 			}
 		}
@@ -219,22 +346,57 @@ func (r *redactor) scrub(s string) string {
 	return s
 }
 
+// value redacts one whole value: a weak password it equals, and secrets
+// inside it.
+func (r *redactor) value(s string) string {
+	if r.weak[s] {
+		return Redacted
+	}
+	return r.scrub(s)
+}
+
+// scrubURL removes secrets from a URL, and weak passwords from its query
+// values. Path segments keep weak passwords, which are ordinary words there
+// ("/admin/login").
+func (r *redactor) scrubURL(raw string) string {
+	raw = r.scrub(raw)
+	if len(r.weak) == 0 {
+		return raw
+	}
+	base, query, ok := strings.Cut(raw, "?")
+	if !ok {
+		return raw
+	}
+	frag := ""
+	if i := strings.IndexByte(query, '#'); i >= 0 {
+		query, frag = query[:i], query[i:]
+	}
+	pairs := strings.Split(query, "&")
+	for i, pair := range pairs {
+		k, v, hasValue := strings.Cut(pair, "=")
+		if val, err := url.QueryUnescape(v); err == nil && hasValue && r.weak[val] {
+			pairs[i] = k + "=" + Redacted
+		}
+	}
+	return base + "?" + strings.Join(pairs, "&") + frag
+}
+
 func (r *redactor) apply(h *HAR) {
 	if m := h.Log.Har2mcp; m != nil {
-		m.StartURL = r.scrub(m.StartURL)
+		m.StartURL = r.scrubURL(m.StartURL)
 		if m.Login != nil {
 			if m.Login.Password != "" {
 				m.Login.Password = Redacted
 			}
-			m.Login.PageURL = r.scrub(m.Login.PageURL)
+			m.Login.PageURL = r.scrubURL(m.Login.PageURL)
 		}
 		for i := range m.Steps {
 			for j := range m.Steps[i].Inputs {
 				in := &m.Steps[i].Inputs[j]
-				if strings.EqualFold(in.Type, "password") {
+				if IsSecretInput(*in) && in.Value != "" {
 					in.Value = Redacted
 				} else {
-					in.Value = r.scrub(in.Value)
+					in.Value = r.value(in.Value)
 				}
 			}
 		}
@@ -242,7 +404,7 @@ func (r *redactor) apply(h *HAR) {
 	for i := range h.Log.Entries {
 		e := &h.Log.Entries[i]
 		req, resp := &e.Request, &e.Response
-		req.URL = r.scrub(req.URL)
+		req.URL = r.scrubURL(req.URL)
 		r.applyHeaders(req.Headers)
 		r.applyHeaders(resp.Headers)
 		for j := range req.Cookies {
@@ -253,24 +415,24 @@ func (r *redactor) apply(h *HAR) {
 		}
 		for j := range req.QueryString {
 			q := &req.QueryString[j]
-			if isSecretField(q.Name) {
+			if IsSecretField(q.Name) {
 				q.Value = Redacted
 			} else {
-				q.Value = r.scrub(q.Value)
+				q.Value = r.value(q.Value)
 			}
 		}
 		if pd := req.PostData; pd != nil {
 			for j := range pd.Params {
 				p := &pd.Params[j]
-				if isSecretField(p.Name) {
+				if IsSecretField(p.Name) {
 					p.Value = Redacted
 				} else {
-					p.Value = r.scrub(p.Value)
+					p.Value = r.value(p.Value)
 				}
 			}
 			pd.Text = string(r.redactBody([]byte(pd.Text), pd.MimeType))
 		}
-		resp.RedirectURL = r.scrub(resp.RedirectURL)
+		resp.RedirectURL = r.scrubURL(resp.RedirectURL)
 		if b, err := resp.Content.Bytes(); err == nil && len(b) > 0 {
 			nb := r.redactBody(b, resp.Content.MimeType)
 			if !bytes.Equal(nb, b) {
@@ -290,19 +452,20 @@ func (r *redactor) apply(h *HAR) {
 
 func (r *redactor) applyHeaders(hs []NameValue) {
 	for i := range hs {
-		if isSecretHeader(hs[i].Name) {
+		if IsSecretHeader(hs[i].Name) {
 			hs[i].Value = Redacted
 		} else {
-			hs[i].Value = r.scrub(hs[i].Value)
+			hs[i].Value = r.value(hs[i].Value)
 		}
 	}
 }
 
-// redactBody redacts secret-named fields of a JSON or form body, then scrubs
-// known secret values from what is left. Other bodies are only scrubbed.
+// redactBody redacts secret-named fields and weak-password values of a JSON
+// or form body, then scrubs known secret values from what is left. Other
+// bodies are only scrubbed.
 func (r *redactor) redactBody(b []byte, mime string) []byte {
 	if v, ok := parseJSON(b); ok {
-		if nv, changed := redactJSON(v); changed {
+		if nv, changed := r.redactJSON(v); changed {
 			var buf bytes.Buffer
 			enc := json.NewEncoder(&buf)
 			enc.SetEscapeHTML(false)
@@ -313,8 +476,16 @@ func (r *redactor) redactBody(b []byte, mime string) []byte {
 	} else if isForm(mime) {
 		pairs := strings.Split(string(b), "&")
 		for i, pair := range pairs {
-			k, _, hasValue := strings.Cut(pair, "=")
-			if name, err := url.QueryUnescape(k); err == nil && hasValue && isSecretField(name) {
+			k, v, hasValue := strings.Cut(pair, "=")
+			if !hasValue {
+				continue
+			}
+			name, err := url.QueryUnescape(k)
+			if err != nil {
+				continue
+			}
+			val, _ := url.QueryUnescape(v)
+			if IsSecretField(name) || r.weak[val] {
 				pairs[i] = k + "=" + Redacted
 			}
 		}
@@ -342,18 +513,18 @@ func parseJSON(b []byte) (any, bool) {
 	return v, true
 }
 
-// walkSecretFields calls fn with every string or number found under a secret
-// field name.
-func walkSecretFields(v any, fn func(string)) {
+// walkSecretFields calls fn with the name and value of every string or
+// number found under a secret field name.
+func walkSecretFields(v any, fn func(name, value string)) {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, val := range x {
-			if isSecretField(k) {
+			if IsSecretField(k) {
 				switch s := val.(type) {
 				case string:
-					fn(s)
+					fn(k, s)
 				case json.Number:
-					fn(s.String())
+					fn(k, s.String())
 				}
 			}
 			walkSecretFields(val, fn)
@@ -365,26 +536,41 @@ func walkSecretFields(v any, fn func(string)) {
 	}
 }
 
-// redactJSON replaces the values of secret-named fields in place.
-func redactJSON(v any) (any, bool) {
+// redactJSON replaces, in place, the values of secret-named fields and the
+// string values that equal a weak password.
+func (r *redactor) redactJSON(v any) (any, bool) {
 	changed := false
 	switch x := v.(type) {
 	case map[string]any:
 		for k, val := range x {
-			if isSecretField(k) {
+			if IsSecretField(k) {
 				if val != Redacted {
 					x[k] = Redacted
 					changed = true
 				}
 				continue
 			}
-			if _, c := redactJSON(val); c {
+			if s, ok := val.(string); ok {
+				if r.weak[s] {
+					x[k] = Redacted
+					changed = true
+				}
+				continue
+			}
+			if _, c := r.redactJSON(val); c {
 				changed = true
 			}
 		}
 	case []any:
-		for _, val := range x {
-			if _, c := redactJSON(val); c {
+		for i, val := range x {
+			if s, ok := val.(string); ok {
+				if r.weak[s] {
+					x[i] = Redacted
+					changed = true
+				}
+				continue
+			}
+			if _, c := r.redactJSON(val); c {
 				changed = true
 			}
 		}

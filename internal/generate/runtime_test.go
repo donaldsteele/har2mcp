@@ -44,6 +44,11 @@ type fakeAPI struct {
 	lastBody  map[string]any
 	lastQuery string
 	lastPath  string
+
+	loginAttempts int               // every POST /api/login, good or bad
+	basicCalls    int               // requests to /basic/status
+	chunks        map[string]string // chunk index -> bytes, from /api/chunk
+	chunkTotal    string
 }
 
 func newFakeAPI(scramble bool) (*fakeAPI, *httptest.Server) {
@@ -136,6 +141,9 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/api/login":
 		var in struct{ Username, Password, Nonce string }
 		json.NewDecoder(r.Body).Decode(&in)
+		f.mu.Lock()
+		f.loginAttempts++
+		f.mu.Unlock()
 		want := f.password
 		if f.scramble {
 			f.mu.Lock()
@@ -265,7 +273,9 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Write(data)
 	default:
-		http.NotFound(w, r)
+		if !f.serveMore(w, r) {
+			http.NotFound(w, r)
+		}
 	}
 }
 

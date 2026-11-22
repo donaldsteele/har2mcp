@@ -76,11 +76,13 @@ func unescapeSeg(s string) string {
 // that takes several values across otherwise identical paths when every one
 // of those values was returned by some response (an item picked from a
 // list), which tells /disks/sda and /disks/sdb apart from /disks and
-// /shares.
-func group(rec *recording, calls []*sample) []*operation {
+// /shares. Session tokens in the path (pathTokens, token value ->
+// placeholder name) are replaced with their placeholder first, so a new
+// session gives the same operations.
+func group(rec *recording, calls []*sample, pathTokens map[string]string) []*operation {
 	pres := make([]*preOp, 0, len(calls))
 	for _, s := range calls {
-		p := s.u.EscapedPath()
+		p := rewritePathTokens(s.u.EscapedPath(), pathTokens)
 		if p == "" {
 			p = "/"
 		}

@@ -86,6 +86,15 @@ func (c *Client) localPath(p string, forWrite bool) (string, error) {
 		full = filepath.Join(root, p)
 	}
 	escape := fmt.Errorf("local path %q is outside the files folder %s; use a path inside it (%s_FILES_DIR)", p, root, envPrefix)
+	// refuse explains why a path was refused: it leaves the folder, or it
+	// goes through a reparse point (see noReparsePoints).
+	refuse := func(err error) error {
+		var rp *reparseError
+		if errors.As(err, &rp) {
+			return fmt.Errorf("local path %q goes through %s, a directory junction, mount point or other special file that could lead outside the files folder %s; use a plain file or folder", p, rp.path, root)
+		}
+		return escape
+	}
 	if !within(root, full) && !within(abs, full) {
 		return "", escape
 	}
@@ -100,18 +109,25 @@ func (c *Client) localPath(p string, forWrite bool) (string, error) {
 		if !within(root, real) {
 			return "", escape
 		}
+		if err := noReparsePoints(root, real); err != nil {
+			return "", refuse(err)
+		}
 		return real, nil
 	}
 	parent, err := ensureDir(root, filepath.Dir(full))
 	if err != nil {
-		if errors.Is(err, errOutside) {
-			return "", escape
+		var rp *reparseError
+		if errors.Is(err, errOutside) || errors.As(err, &rp) {
+			return "", refuse(err)
 		}
 		return "", err
 	}
 	target := filepath.Join(parent, filepath.Base(full))
 	if !within(root, target) || target == root {
 		return "", escape
+	}
+	if err := noReparsePoints(root, target); err != nil {
+		return "", refuse(err)
 	}
 	if fi, err := os.Lstat(target); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		real, err := filepath.EvalSymlinks(target)
@@ -123,6 +139,45 @@ func (c *Client) localPath(p string, forWrite bool) (string, error) {
 }
 
 var errOutside = errors.New("outside the files folder")
+
+// reparseError is a path entry that noReparsePoints refused.
+type reparseError struct{ path string }
+
+func (e *reparseError) Error() string {
+	return e.path + " is a directory junction, mount point or other special file"
+}
+
+// noReparsePoints returns a *reparseError when any entry on the way from
+// root to p (p included) is an irregular file, and errOutside when p is not
+// inside root. On Windows an irregular entry is a directory junction or
+// mount point: Go reports it as irregular rather than as a symlink, and
+// filepath.EvalSymlinks does not follow it, so it could lead out of the
+// files folder unseen. (main.go also sets winsymlink=0, which makes Go
+// treat junctions as symlinks; this check holds either way.)
+func noReparsePoints(root, p string) error {
+	rel, err := filepath.Rel(root, p)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errOutside
+	}
+	if rel == "." {
+		return nil
+	}
+	cur := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&fs.ModeIrregular != 0 {
+			return &reparseError{path: cur}
+		}
+	}
+	return nil
+}
 
 // ensureDir returns the real path of dir, creating the missing folders.
 // The deepest folder that exists must resolve inside root, so a symlink can
@@ -149,6 +204,9 @@ func ensureDir(root, dir string) (string, error) {
 	}
 	if !within(root, real) {
 		return "", errOutside
+	}
+	if err := noReparsePoints(root, real); err != nil {
+		return "", err
 	}
 	fi, err := os.Stat(real)
 	if err != nil {
@@ -241,7 +299,8 @@ func (c *Client) sendUpload(ctx context.Context, r *request, src string, size in
 }
 
 // setChunkFields sets the offset, total and index of a chunk, in the query
-// when the recorded request had them there, else in the body.
+// when the recorded request had them there, else in the body. index counts
+// from 0; the device gets index + IndexBase.
 func setChunkFields(op *operation, r *request, ch *chunking, offset, total, index int64) {
 	set := func(field string, v int64) {
 		if field == "" {
@@ -258,7 +317,7 @@ func setChunkFields(op *operation, r *request, ch *chunking, offset, total, inde
 	}
 	set(ch.OffsetField, offset)
 	set(ch.TotalField, total)
-	set(ch.IndexField, index)
+	set(ch.IndexField, index+ch.IndexBase)
 }
 
 func cloneValues(v map[string][]string) map[string][]string {

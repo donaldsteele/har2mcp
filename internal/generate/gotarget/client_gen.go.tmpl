@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,7 +33,7 @@ const (
 	serviceName         = {{quote .Name}}
 	envPrefix           = {{quote .EnvPrefix}}
 	defaultBaseURL      = {{quote .BaseURL}} // used when {{.EnvPrefix}}_URL is not set
-	authMode            = {{quote .Mode}}    // "none", "http" or "browser"
+	authMode            = {{quote .Mode}}    // "none", "http", "browser" or "basic"
 	loginPageURL        = {{quote .LoginPageURL}}
 	reloginBodyContains = {{quote .ReloginBodyContains}}
 )
@@ -57,6 +59,25 @@ var tokenFlows = {{.TokensLit}}
 const (
 	userPlaceholder     = "{{"{{"}}" + "username}}"
 	passwordPlaceholder = "{{"{{"}}" + "password}}"
+)
+
+// Placeholders for cache-busting query parameters, filled in on every
+// request: the current time in milliseconds or seconds, or a random number
+// between 0 and 1.
+const (
+	nowMsPlaceholder  = "{{"{{"}}" + "now_ms}}"
+	nowSPlaceholder   = "{{"{{"}}" + "now_s}}"
+	randomPlaceholder = "{{"{{"}}" + "random}}"
+)
+
+// After a failed login the server does not try again for a while, so that a
+// wrong password cannot run into the device's brute-force lockout (many
+// devices block the address after 5 to 10 failures). Credentials only change
+// when the server restarts, so a rejected login waits longer than a network
+// error.
+const (
+	loginRetryAfterRejected = 15 * time.Minute
+	loginRetryAfterError    = 30 * time.Second
 )
 
 // loginRequest is the recorded login request.
@@ -89,31 +110,38 @@ type fileOp struct {
 }
 
 // chunking describes a chunked upload: the file goes in Size-byte pieces,
-// each request carrying its offset, the total size and its index.
+// each request carrying its offset, the total size and its index. The
+// first index is IndexBase (0, or 1 for resumable.js and flow.js).
 type chunking struct {
 	OffsetField string
 	TotalField  string
 	IndexField  string
 	Size        int64
+	IndexBase   int64
 }
 
 // tokenRef is one place a session token lives. Exactly one field is set.
 type tokenRef struct {
-	ResponseJSON   string // dotted path in the login response body
-	ResponseHeader string // login (or any) response header
+	ResponseJSON   string // dotted path in a JSON response body
+	ResponseText   string // regular expression whose first group is the token
+	ResponseHeader string // response header
 	Cookie         string // cookie, read when each request is sent
 	Header         string // request header
 	Query          string // query parameter
 	Body           string // body field
+	Path           string // {placeholder} in request paths
 }
 
 // tokenFlow is a session token: where it comes from and where it goes.
-// Prefix is sent in front of it, such as "Bearer ".
+// Prefix is sent in front of it, such as "Bearer ". The token is read from
+// the login response, or, when Request is set, from the response to that
+// request, which the server sends after logging in.
 type tokenFlow struct {
-	Name   string
-	From   tokenRef
-	To     tokenRef
-	Prefix string
+	Name    string
+	From    tokenRef
+	To      tokenRef
+	Prefix  string
+	Request *operation
 }
 
 // Client sends requests to the device. It logs in on first use, adds the
@@ -127,9 +155,11 @@ type Client struct {
 	http     *http.Client
 	jar      *sessionJar
 
-	mu       sync.Mutex // serializes logins and guards loggedIn and epoch
-	loggedIn bool
-	epoch    int // counts logins
+	mu         sync.Mutex // serializes logins and guards loggedIn, epoch and loginErr
+	loggedIn   bool
+	epoch      int       // counts logins
+	loginErr   error     // the last failed login, returned until it may be retried
+	loginErrAt time.Time // when it failed
 
 	tokMu  sync.Mutex
 	tokens []string // value per tokenFlows entry
@@ -272,15 +302,16 @@ func newRequest(op *operation) *request {
 }
 
 // send logs in if needed and sends r. When the response says the session
-// has expired, it logs in again and sends r once more. The caller closes the
-// response body.
+// has expired, it logs in again and sends r once more, unless it logged in
+// for this very call (a session that fails at once would fail again). The
+// caller closes the response body.
 func (c *Client) send(ctx context.Context, r *request) (*http.Response, error) {
-	epoch, err := c.ensureLogin(ctx)
+	epoch, fresh, err := c.ensureLogin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := c.roundTrip(ctx, r)
-	if err != nil || authMode == "none" || !sessionExpired(resp) {
+	if err != nil || authMode == "none" || authMode == "basic" || fresh || !sessionExpired(resp) {
 		return resp, err
 	}
 	resp.Body.Close()
@@ -290,15 +321,18 @@ func (c *Client) send(ctx context.Context, r *request) (*http.Response, error) {
 	return c.roundTrip(ctx, r)
 }
 
-func (c *Client) ensureLogin(ctx context.Context) (int, error) {
+// ensureLogin logs in if needed. fresh reports whether it logged in during
+// this call.
+func (c *Client) ensureLogin(ctx context.Context) (epoch int, fresh bool, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.loggedIn && authMode != "none" {
+	if !c.loggedIn {
 		if err := c.loginLocked(ctx); err != nil {
-			return 0, err
+			return 0, false, err
 		}
+		fresh = true
 	}
-	return c.epoch, nil
+	return c.epoch, fresh, nil
 }
 
 // relogin logs in again, unless another request already did so after the
@@ -312,18 +346,93 @@ func (c *Client) relogin(ctx context.Context, epoch int) error {
 	return c.loginLocked(ctx)
 }
 
+// loginLocked logs in and fetches the session tokens. After a failed login
+// it returns that error again, without contacting the device, until
+// loginRetryAfterRejected (rejected credentials) or loginRetryAfterError
+// (anything else) has passed.
 func (c *Client) loginLocked(ctx context.Context) error {
+	if c.loginErr != nil {
+		wait := loginRetryAfterError
+		var rej *loginRejected
+		if errors.As(c.loginErr, &rej) {
+			wait = loginRetryAfterRejected
+		}
+		if since := time.Since(c.loginErrAt); since < wait {
+			return fmt.Errorf("%w (not tried again yet: after a failed login this server waits %s so the device does not lock the account; fix %s_USER and %s_PASSWORD and restart the server, or try again in %s)",
+				c.loginErr, wait, envPrefix, envPrefix, (wait - since).Round(time.Second))
+		}
+	}
 	c.loggedIn = false
 	c.jar.reset()
 	c.tokMu.Lock()
 	c.tokens = make([]string, len(tokenFlows))
 	c.tokMu.Unlock()
 	if err := c.login(ctx); err != nil {
-		return fmt.Errorf("login failed: %w", err)
+		c.loginErr, c.loginErrAt = fmt.Errorf("login failed: %w", err), time.Now()
+		return c.loginErr
 	}
+	c.loginErr = nil
+	c.fetchTokens(ctx)
 	c.loggedIn = true
 	c.epoch++
 	return nil
+}
+
+// loginRejected is a login the device turned down: wrong credentials, most
+// likely.
+type loginRejected struct{ err error }
+
+func (e *loginRejected) Error() string { return e.err.Error() }
+func (e *loginRejected) Unwrap() error { return e.err }
+
+// requestKey names a token request: "GET /api/session". The login response
+// is "".
+func requestKey(op *operation) string {
+	if op == nil {
+		return ""
+	}
+	return op.Method + " " + op.Path
+}
+
+// fetchTokens sends the requests whose responses carry session tokens (the
+// tokenFlows entries with a Request) and reads the tokens from them.
+func (c *Client) fetchTokens(ctx context.Context) {
+	done := map[string]bool{}
+	for _, tf := range tokenFlows {
+		key := requestKey(tf.Request)
+		if key == "" || done[key] {
+			continue
+		}
+		done[key] = true
+		req, err := c.newHTTPRequest(ctx, newRequest(tf.Request))
+		if err != nil {
+			log.Printf("warning: %s for the session token: %v", key, err)
+			continue
+		}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			log.Printf("warning: %s for the session token: %v", key, err)
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			log.Printf("warning: %s for the session token: HTTP %s", key, resp.Status)
+		}
+		c.captureTokens(key, resp.Header, body, resp.Request.URL)
+	}
+}
+
+// isTokenPlaceholder reports whether a path placeholder ("{stok}") is
+// filled with a session token rather than a tool argument.
+func isTokenPlaceholder(m string) bool {
+	name := strings.TrimSuffix(strings.TrimPrefix(m, "{"), "}")
+	for _, tf := range tokenFlows {
+		if tf.To.Path == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) login(ctx context.Context) error {
@@ -363,14 +472,28 @@ func (c *Client) httpLogin(ctx context.Context) error {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("HTTP %s from %s %s: %s; check %s_USER and %s_PASSWORD", resp.Status, r.method, r.path, snippet(body, 300), envPrefix, envPrefix)
+		return &loginRejected{fmt.Errorf("HTTP %s from %s %s: %s; check %s_USER and %s_PASSWORD%s", resp.Status, r.method, r.path, snippet(body, 300), envPrefix, envPrefix, c.redirectHint(resp))}
 	}
 	if missing := c.missingSessionCookies(); len(missing) > 0 {
-		return fmt.Errorf("the device did not set the session cookie %s (HTTP %s: %s); check %s_USER and %s_PASSWORD, or auth.session.cookies in the spec",
-			strings.Join(missing, ", "), resp.Status, snippet(body, 300), envPrefix, envPrefix)
+		return &loginRejected{fmt.Errorf("the device did not set the session cookie %s (HTTP %s: %s); check %s_USER and %s_PASSWORD, or auth.session.cookies in the spec%s",
+			strings.Join(missing, ", "), resp.Status, snippet(body, 300), envPrefix, envPrefix, c.redirectHint(resp))}
 	}
-	c.captureTokens(resp.Header, body, resp.Request.URL)
+	c.captureTokens("", resp.Header, body, resp.Request.URL)
 	return nil
+}
+
+// redirectHint explains a login that the device redirected to another
+// address (http to https, another port): the POST arrives there as a GET
+// without its body, so the login cannot work.
+func (c *Client) redirectHint(resp *http.Response) string {
+	if resp.Request == nil || resp.Request.URL == nil {
+		return ""
+	}
+	u := resp.Request.URL
+	if u.Scheme == c.base.Scheme && u.Host == c.base.Host {
+		return ""
+	}
+	return fmt.Sprintf(". The device redirected the login to %s://%s; set %s_URL to that address", u.Scheme, u.Host, envPrefix)
 }
 
 // withCredentials returns the login request with the username and password
@@ -446,15 +569,26 @@ func (c *Client) missingSessionCookies() []string {
 	return missing
 }
 
-// captureTokens reads the session tokens from the login response.
-func (c *Client) captureTokens(header http.Header, body []byte, final *url.URL) {
+// captureTokens reads session tokens from a response: the login response
+// when source is "", else the response to the token request source names
+// (see requestKey).
+func (c *Client) captureTokens(source string, header http.Header, body []byte, final *url.URL) {
 	c.tokMu.Lock()
 	defer c.tokMu.Unlock()
+	what := "the login response"
+	if source != "" {
+		what = "the response to " + source
+	}
 	for i, tf := range tokenFlows {
+		if requestKey(tf.Request) != source {
+			continue
+		}
 		var v, where string
 		switch f := tf.From; {
 		case f.ResponseJSON != "":
 			v, where = jsonPath(body, f.ResponseJSON), "response field "+f.ResponseJSON
+		case f.ResponseText != "":
+			v, where = textMatch(body, f.ResponseText), "text matching "+f.ResponseText
 		case f.Body != "":
 			v, where = jsonPath(body, f.Body), "response field "+f.Body
 		case f.ResponseHeader != "":
@@ -473,11 +607,23 @@ func (c *Client) captureTokens(header http.Header, body []byte, final *url.URL) 
 			continue // cookies are read when each request is sent
 		}
 		if v == "" {
-			log.Printf("warning: the login response has no %s for token %q; requests may fail (see auth.session.tokens in the spec)", where, tf.Name)
+			log.Printf("warning: %s has no %s for token %q; requests may fail (see auth.session.tokens in the spec)", what, where, tf.Name)
 			continue
 		}
 		c.tokens[i] = v
 	}
+}
+
+// textMatch returns the first group of pattern's first match in body, or "".
+func textMatch(body []byte, pattern string) string {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return ""
+	}
+	if m := re.FindSubmatch(body); len(m) > 1 {
+		return string(m[1])
+	}
+	return ""
 }
 
 // captureHeaderTokens refreshes tokens that come from a response header,
@@ -561,6 +707,7 @@ func (c *Client) newHTTPRequest(ctx context.Context, r *request) (*http.Request,
 		query[k] = append([]string(nil), v...)
 	}
 	body := copyMap(r.body)
+	path := r.path
 	tokenHeaders := map[string]string{}
 	var tokenCookies []*http.Cookie
 	for i, tf := range tokenFlows {
@@ -581,10 +728,27 @@ func (c *Client) newHTTPRequest(ctx context.Context, r *request) (*http.Request,
 			setField(body, r.bodyType, tf.To.Body, v)
 		case tf.To.Cookie != "":
 			tokenCookies = append(tokenCookies, &http.Cookie{Name: tf.To.Cookie, Value: v})
+		case tf.To.Path != "":
+			path = strings.ReplaceAll(path, "{"+tf.To.Path+"}", url.PathEscape(v))
+		}
+	}
+	if m := placeholderRE.FindString(path); m != "" {
+		return nil, fmt.Errorf("no session token for %s in the request path %s: the device did not return it at login (see auth.session.tokens in the spec)", m, r.path)
+	}
+	for _, vs := range query {
+		for i, v := range vs {
+			switch v {
+			case nowMsPlaceholder:
+				vs[i] = strconv.FormatInt(time.Now().UnixMilli(), 10)
+			case nowSPlaceholder:
+				vs[i] = strconv.FormatInt(time.Now().Unix(), 10)
+			case randomPlaceholder:
+				vs[i] = strconv.FormatFloat(rand.Float64(), 'f', 16, 64)
+			}
 		}
 	}
 
-	target := c.origin() + r.path
+	target := c.origin() + path
 	if len(query) > 0 {
 		target += "?" + query.Encode()
 	}
@@ -646,6 +810,9 @@ func (c *Client) newHTTPRequest(ctx context.Context, r *request) (*http.Request,
 	}
 	for _, ck := range tokenCookies {
 		req.AddCookie(ck)
+	}
+	if authMode == "basic" {
+		req.SetBasicAuth(c.user, c.password)
 	}
 	return req, nil
 }

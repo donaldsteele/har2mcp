@@ -1,11 +1,10 @@
 package analyze
 
 import (
+	"encoding/base64"
 	"fmt"
-	"net/url"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -21,8 +20,11 @@ type authResult struct {
 	// carriers are the headers ("header\x00<lower name>"), query keys and
 	// body fields that carry session tokens; the generated server fills them.
 	carriers    map[string]bool
-	secrets     []string // passwords sent as typed (plain HAR logins)
+	secrets     []string // passwords sent as typed (plain HAR logins, Basic auth)
 	tokenValues []string
+	// pathTokens maps session-token values that requests carry in their URL
+	// path to the name of the {placeholder} that stands for them.
+	pathTokens map[string]string
 }
 
 func (a *authResult) isCarrier(loc, name string) bool {
@@ -47,17 +49,20 @@ func isFormPost(s *sample) bool {
 }
 
 // detectAuth finds the login and the session. cands are the requests to the
-// service that could be a login (API calls and form posts), in time order.
+// service that could be a login (API calls and form posts), in time order;
+// onHost are all the requests to the service, pages included, in time order.
 //
 // In a recording, the login request is the one carrying the typed password
 // (http mode: the generated server replays it), or failing that the one
 // carrying the typed username or setting a cookie in the login step
 // (browser mode: the page scrambled the password, so the server logs in
-// through headless Chrome). A plain HAR has no typed values, so a request
-// with a password field on a login-like path is taken and flagged for
-// review.
-func detectAuth(rec *recording, cands []*sample) *authResult {
-	a := &authResult{login: map[*sample]bool{}, loginSteps: map[int]bool{}, carriers: map[string]bool{}}
+// through headless Chrome). Requests that carry an "Authorization: Basic"
+// header and no login request mean HTTP Basic auth (basic mode). A plain
+// HAR has no typed values, so a request with a password field and a strong
+// sign of being a login (a login-like path, or a response that sets a
+// cookie or returns a token) is taken and flagged for review.
+func detectAuth(rec *recording, cands, onHost []*sample) *authResult {
+	a := &authResult{login: map[*sample]bool{}, loginSteps: map[int]bool{}, carriers: map[string]bool{}, pathTokens: map[string]string{}}
 	a.spec.Mode = "none"
 
 	var (
@@ -67,6 +72,7 @@ func detectAuth(rec *recording, cands []*sample) *authResult {
 		username  string
 		password  string
 		heuristic bool
+		rejected  *sample
 	)
 	for i := range rec.captures {
 		c := &rec.captures[i]
@@ -95,15 +101,25 @@ func detectAuth(rec *recording, cands []*sample) *authResult {
 			}
 		}
 	}
+	ha := detectHTTPAuth(onHost)
+	if mode == "" && ha.basic {
+		mode = "basic"
+		a.secrets = append(a.secrets, ha.password)
+	}
 	if mode == "" && len(rec.captures) > 0 {
 		capt, mode = &rec.captures[0], "browser"
 	}
 	if mode == "" {
-		if s, user, pass := guessLogin(cands); s != nil {
+		s, user, pass, rej := guessLogin(cands)
+		if s != nil {
 			loginS, mode, heuristic = s, "http", true
 			username, password = user, pass
 			a.secrets = append(a.secrets, pass)
 		}
+		rejected = rej
+	}
+	if mode == "" && ha.challenge {
+		mode = "basic"
 	}
 
 	if loginS != nil {
@@ -116,15 +132,23 @@ func detectAuth(rec *recording, cands []*sample) *authResult {
 		a.loginSteps[capt.step] = true
 	}
 
-	tokens := detectTokens(rec, cands, a.login)
+	tokens := detectTokens(rec, cands, onHost, a.login)
 	for _, c := range tokens.carriers {
 		a.carriers[c] = true
 	}
 	a.tokenValues = tokens.values
+	a.pathTokens = tokens.pathTokens
 
 	if mode == "" {
 		if rec.plain {
 			a.note("This is a plain HAR without har2mcp step labels and no login request was found in it. If the device needs a login, record a session with 'har2mcp record' so the login is captured.")
+		}
+		if rejected != nil {
+			a.note("%s %s sends a password but does not look like a login (it changes a password or adds a user, or nothing marks it as a login: no login-like path, and no cookie or token in its response), so it was kept as a tool, not used as the login. If it is the login, describe it in auth.login and set auth.mode to http.",
+				strings.ToUpper(rejected.e.Request.Method), rejected.u.EscapedPath())
+		}
+		if ha.digest {
+			a.note("The device uses HTTP Digest authentication, which har2mcp does not support yet, so the generated server sends requests without a login and they will fail. Add the login in the generated server's custom.go, or use another way in to the device.")
 		}
 		if names := sessionCookiesSent(cands, nil); len(names) > 0 {
 			a.note("Requests send the cookies %s, but no login was recorded, so the generated server cannot get them. Record the login with 'har2mcp record'.", strings.Join(names, ", "))
@@ -140,6 +164,20 @@ func detectAuth(rec *recording, cands []*sample) *authResult {
 	}
 
 	a.spec.Mode = mode
+	if mode == "basic" {
+		a.spec.Session.Tokens = tokens.flows
+		switch {
+		case !ha.basic:
+			a.note("The device asked for HTTP Basic authentication (WWW-Authenticate), but no request in the HAR carries the credentials (DevTools strips them from exported HARs), so har2mcp could not check them. Check auth.mode.")
+		case len(rec.captures) > 0 && rec.captures[0].lc.Password != "" && rec.captures[0].lc.Password != ha.password:
+			a.note("Requests carry HTTP Basic credentials that differ from the password typed in the login form. Check auth.mode.")
+		}
+		for _, n := range tokens.notes {
+			a.note("%s", n)
+		}
+		return a
+	}
+
 	l := &spec.Login{}
 	if capt != nil {
 		page := capt.lc.PageURL
@@ -170,6 +208,9 @@ func detectAuth(rec *recording, cands []*sample) *authResult {
 				l.Form.Password = "input[type=password]"
 			}
 			a.note("The login form's field selectors were not all captured; auth.login.form uses generic ones. Check them against the login page.")
+		}
+		if l.Form.Submit == "" {
+			a.note("The login form's submit button was not recorded (you pressed Enter, or clicked a control har2mcp could not tie to the form), so the generated server presses Enter in the password field to log in. If that does not log in, set auth.login.form.submit to the button's CSS selector.")
 		}
 		if l.PageURL == "" {
 			l.PageURL = "/"
@@ -203,15 +244,68 @@ func detectAuth(rec *recording, cands []*sample) *authResult {
 	return a
 }
 
+// httpAuth is what the requests say about HTTP authentication.
+type httpAuth struct {
+	basic              bool // a request carries Authorization: Basic
+	username, password string
+	challenge          bool // a response asked for Basic auth (WWW-Authenticate)
+	digest             bool // Digest auth was asked for or used
+}
+
+// detectHTTPAuth looks for HTTP Basic and Digest authentication: the
+// Authorization headers requests send and the WWW-Authenticate headers of
+// 401 responses.
+func detectHTTPAuth(samples []*sample) httpAuth {
+	var ha httpAuth
+	for _, s := range samples {
+		for _, h := range s.e.Request.Headers {
+			if !strings.EqualFold(h.Name, "authorization") {
+				continue
+			}
+			scheme, cred, _ := strings.Cut(strings.TrimSpace(h.Value), " ")
+			switch strings.ToLower(scheme) {
+			case "basic":
+				b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(cred))
+				if err != nil {
+					continue
+				}
+				if user, pass, ok := strings.Cut(string(b), ":"); ok && !ha.basic {
+					ha.basic, ha.username, ha.password = true, user, pass
+				}
+			case "digest":
+				ha.digest = true
+			}
+		}
+		for _, h := range s.e.Response.Headers {
+			if !strings.EqualFold(h.Name, "www-authenticate") {
+				continue
+			}
+			for _, line := range strings.Split(h.Value, "\n") {
+				scheme, _, _ := strings.Cut(strings.TrimSpace(line), " ")
+				switch strings.ToLower(scheme) {
+				case "basic":
+					ha.challenge = true
+				case "digest":
+					ha.digest = true
+				}
+			}
+		}
+	}
+	if ha.digest && !ha.basic {
+		ha.challenge = false
+	}
+	return ha
+}
+
 // findPassword returns the request that sent the typed password: one with a
-// field equal to it, else (for passwords of at least 6 characters) one with
-// a field containing it. Requests in the login step win.
+// field equal to it, else (for distinctive passwords) one with a field
+// containing it. Requests in the login step win.
 func findPassword(cands []*sample, c *capture) *sample {
 	pw := c.lc.Password
 	if s := findForCapture(cands, c, true, func(s *sample) bool { return carries(s, pw, false) }); s != nil {
 		return s
 	}
-	if len(pw) < 6 {
+	if !har.Distinctive(pw) {
 		return nil
 	}
 	return findForCapture(cands, c, true, func(s *sample) bool { return carries(s, pw, true) })
@@ -253,25 +347,51 @@ func findForCapture(cands []*sample, c *capture, getOK bool, ok func(*sample) bo
 
 var loginPathRE = regexp.MustCompile(`(?i)log_?in|log_?on|sign_?in|sign-in|auth|session`)
 
-// guessLogin picks the most login-like request of a plain HAR: one with a
-// password field, preferably on a login-like path or action, setting
-// cookies or returning a token.
-func guessLogin(cands []*sample) (s *sample, username, password string) {
+// changeStemsForLogin are words in a path or action that mark a request
+// with a password field as changing a password or adding a user, not
+// logging in.
+var changeStemsForLogin = []string{"chang", "updat", "creat", "add", "new", "regist", "signup", "reset", "modif", "edit", "set", "save", "user", "account", "passw", "pwd"}
+
+// neverLoginStems are the words among changeStemsForLogin that mark a
+// password change or a sign-up even on a login-like path
+// ("/cgi-bin/auth/changepw", "/api/auth/register"). The others ("user",
+// "create", ...) also appear in real login paths ("/api/users/login",
+// "/session/create"), so they count only on other paths.
+var neverLoginStems = []string{"chang", "updat", "regist", "signup", "reset", "modif", "edit"}
+
+// notLoginPasswordRE matches password field names of a password change:
+// old_password, new_password, confirm_password and the like.
+var notLoginPasswordRE = regexp.MustCompile(`(?i)old|new|confirm|repeat|verify|again|retype|current|2$`)
+
+// guessLogin picks the login of a plain HAR: a request with one password
+// field and a strong sign of being a login: a login-like path or action, or
+// a response that sets a cookie or returns a token. A request with two
+// password fields (old and new), a password field named like a password
+// change, or a path that changes or adds something is not a login. When no
+// request qualifies, rejected is the first that sent a password, for a
+// review note.
+func guessLogin(cands []*sample) (s *sample, username, password string, rejected *sample) {
 	best, bestScore := (*sample)(nil), 0
 	var bestUser, bestPass string
 	for _, c := range cands {
 		if strings.EqualFold(c.e.Request.Method, "GET") && len(c.req.fields) == 0 {
 			continue
 		}
-		pass, user := "", ""
+		pass, user, passFields, changeField := "", "", 0, false
 		for _, f := range c.req.fields {
 			str, ok := f.value.(string)
 			if !ok || str == "" {
 				continue
 			}
 			switch {
-			case pass == "" && isPasswordField(f.path):
-				pass = str
+			case isPasswordField(f.path):
+				passFields++
+				if notLoginPasswordRE.MatchString(lastSegment(f.path)) {
+					changeField = true
+				}
+				if pass == "" {
+					pass = str
+				}
 			case user == "" && isUsernameField(f.path):
 				user = str
 			}
@@ -279,24 +399,36 @@ func guessLogin(cands []*sample) (s *sample, username, password string) {
 		if pass == "" {
 			continue
 		}
-		score := 3
 		_, vals := discriminators(c.req)
-		if loginPathRE.MatchString(c.u.Path) || loginPathRE.MatchString(strings.Join(vals, " ")) {
-			score += 2
-		}
-		if len(responseCookies(c.e)) > 0 {
-			score++
-		}
+		where := c.u.Path + " " + strings.Join(vals, " ")
+		loginLike := loginPathRE.MatchString(where)
+		ws := words(where)
+		changes := hasStem(ws, changeStemsForLogin, nil, nil)
+		neverLogin := hasStem(ws, neverLoginStems, nil, nil)
+		setsCookie := len(responseCookies(c.e)) > 0
+		token := false
 		if v, ok := responseJSON(c.e); ok {
-			found := false
 			walkSecretFields(v, func(t string) {
 				if looksTokenish(t) {
-					found = true
+					token = true
 				}
 			})
-			if found {
-				score++
+		}
+		if passFields > 1 || changeField || neverLogin || (!loginLike && (changes || !(setsCookie || token))) {
+			if rejected == nil {
+				rejected = c
 			}
+			continue
+		}
+		score := 1
+		if loginLike {
+			score += 2
+		}
+		if setsCookie {
+			score++
+		}
+		if token {
+			score++
 		}
 		if !strings.EqualFold(c.e.Request.Method, "GET") {
 			score++
@@ -305,10 +437,10 @@ func guessLogin(cands []*sample) (s *sample, username, password string) {
 			best, bestScore, bestUser, bestPass = c, score, user, pass
 		}
 	}
-	if bestScore < 4 {
-		return nil, "", ""
+	if best == nil {
+		return nil, "", "", rejected
 	}
-	return best, bestUser, bestPass
+	return best, bestUser, bestPass, nil
 }
 
 func isUsernameField(name string) bool {
@@ -343,9 +475,16 @@ func loginRequest(s *sample, mode, username, password string, a *authResult) spe
 		v := f.value
 		if str, ok := v.(string); ok {
 			switch {
+			case password != "" && str == password && str == username:
+				// The username and password are the same ("admin" and
+				// "admin"): the field name tells them apart.
+				v = "{{password}}"
+				if isUsernameField(f.path) && !isPasswordField(f.path) {
+					v = "{{username}}"
+				}
 			case password != "" && str == password:
 				v = "{{password}}"
-			case password != "" && len(password) >= 4 && strings.Contains(str, password):
+			case password != "" && har.Distinctive(password) && strings.Contains(str, password):
 				v = strings.ReplaceAll(str, password, "{{password}}")
 			case username != "" && str == username:
 				v = "{{username}}"
@@ -370,18 +509,26 @@ func loginRequest(s *sample, mode, username, password string, a *authResult) spe
 			r.Body[f.path] = v
 		}
 	}
+	r.Headers = replayableHeaders(s)
+	return r
+}
+
+// replayableHeaders are the non-standard, non-secret headers of a request,
+// which a replay of it sends as recorded.
+func replayableHeaders(s *sample) map[string]string {
+	var out map[string]string
 	for _, h := range s.e.Request.Headers {
 		if isStandardHeader(h.Name) || isSecretHeader(h.Name) {
 			continue
 		}
-		if r.Headers == nil {
-			r.Headers = map[string]string{}
+		if out == nil {
+			out = map[string]string{}
 		}
-		if _, dup := r.Headers[h.Name]; !dup {
-			r.Headers[h.Name] = h.Value
+		if _, dup := out[h.Name]; !dup {
+			out[h.Name] = h.Value
 		}
 	}
-	return r
+	return out
 }
 
 var sessionCookieRE = regexp.MustCompile(`(?i)sess|sid|auth|token|login|jwt|user|remember`)
@@ -470,203 +617,6 @@ func looksTokenish(v string) bool {
 		return false
 	}
 	return len(v) >= 16 || strings.IndexFunc(v, unicode.IsDigit) >= 0
-}
-
-type tokenSource struct {
-	ref       spec.TokenRef
-	fromLogin bool
-}
-
-type tokenResult struct {
-	flows    []spec.TokenFlow
-	carriers []string
-	values   []string
-	notes    []string
-}
-
-// responseHeadersSkipped are response headers that never carry a session
-// token.
-var responseHeadersSkipped = map[string]bool{
-	"date": true, "content-type": true, "content-length": true, "content-encoding": true,
-	"etag": true, "last-modified": true, "expires": true, "cache-control": true, "server": true,
-	"set-cookie": true, "vary": true, "connection": true, "keep-alive": true,
-	"transfer-encoding": true, "location": true, "x-powered-by": true, "age": true,
-	"strict-transport-security": true, "content-security-policy": true, "accept-ranges": true,
-	"x-content-type-options": true, "x-frame-options": true, "x-xss-protection": true,
-	"referrer-policy": true, "permissions-policy": true, "content-disposition": true,
-	"report-to": true, "nel": true, "alt-svc": true, "pragma": true,
-}
-
-// detectTokens finds values that a response handed out and later requests
-// sent back: CSRF tokens in a header, bearer tokens, tokens in a query or
-// body field. Each becomes a token flow, and the field that carries it is
-// hidden from the tools.
-func detectTokens(rec *recording, cands []*sample, login map[*sample]bool) tokenResult {
-	type carrier struct {
-		loc, name string
-		refs      map[spec.TokenRef]int
-		first     spec.TokenRef
-		prefix    string
-	}
-	var res tokenResult
-	byKey := map[string]*carrier{}
-	var order []string
-	secretHeaders := map[string]string{} // lower name -> name, headers that look secret
-	record := func(loc, name string, src tokenSource, prefix, value string) {
-		k := loc + "\x00" + name
-		if loc == "header" {
-			k = loc + "\x00" + strings.ToLower(name)
-		}
-		c := byKey[k]
-		if c == nil {
-			c = &carrier{loc: loc, name: name, refs: map[spec.TokenRef]int{}, first: src.ref, prefix: prefix}
-			byKey[k] = c
-			order = append(order, k)
-		}
-		c.refs[src.ref]++
-		res.values = append(res.values, value)
-	}
-
-	for hi := range rec.hars {
-		sources := map[string]tokenSource{}
-		addSource := func(v string, src tokenSource) {
-			for _, val := range []string{v, unescapeQuery(v)} {
-				if looksTokenish(val) {
-					if _, ok := sources[val]; !ok {
-						sources[val] = src
-					}
-				}
-			}
-		}
-		for _, s := range cands {
-			if s.har != hi {
-				continue
-			}
-			for _, c := range requestCookies(s.e) {
-				addSource(c.value, tokenSource{ref: spec.TokenRef{Cookie: c.name}})
-			}
-			for _, h := range s.e.Request.Headers {
-				ln := strings.ToLower(h.Name)
-				if ln == "cookie" || (isStandardHeader(ln) && ln != "authorization") {
-					continue
-				}
-				v := strings.TrimSpace(h.Value)
-				if v == "" || v == "null" || v == "undefined" {
-					continue
-				}
-				if src, ok := sources[v]; ok {
-					record("header", h.Name, src, "", v)
-					continue
-				}
-				if i := strings.LastIndexByte(v, ' '); i > 0 {
-					if src, ok := sources[v[i+1:]]; ok {
-						record("header", h.Name, src, v[:i+1], v[i+1:])
-						continue
-					}
-				}
-				if isSecretHeader(ln) {
-					secretHeaders[ln] = h.Name
-				}
-			}
-			for _, f := range s.req.fields {
-				str, ok := f.value.(string)
-				if !ok || !looksTokenish(str) {
-					continue
-				}
-				if src, ok := sources[str]; ok && !login[s] && (isSecretField(f.path) || src.fromLogin) {
-					record(f.loc, f.path, src, "", str)
-				}
-			}
-
-			fromLogin := login[s]
-			if v, ok := responseJSON(s.e); ok {
-				walkLeaves("", v, func(path, str string) {
-					addSource(str, tokenSource{ref: spec.TokenRef{ResponseJSON: path}, fromLogin: fromLogin})
-				})
-			}
-			for _, h := range s.e.Response.Headers {
-				if !responseHeadersSkipped[strings.ToLower(h.Name)] && !strings.HasPrefix(strings.ToLower(h.Name), "access-control-") {
-					addSource(strings.TrimSpace(h.Value), tokenSource{ref: spec.TokenRef{ResponseHeader: h.Name}, fromLogin: fromLogin})
-				}
-			}
-			for _, c := range responseCookies(s.e) {
-				addSource(c.value, tokenSource{ref: spec.TokenRef{Cookie: c.name}, fromLogin: fromLogin})
-			}
-		}
-	}
-
-	taken := map[string]bool{}
-	for _, k := range order {
-		c := byKey[k]
-		// The most common source wins; ties go to the first one seen.
-		ref := c.first
-		refs := make([]spec.TokenRef, 0, len(c.refs))
-		for r := range c.refs {
-			refs = append(refs, r)
-		}
-		sort.Slice(refs, func(i, j int) bool { return fmt.Sprint(refs[i]) < fmt.Sprint(refs[j]) })
-		for _, r := range refs {
-			if c.refs[r] > c.refs[ref] {
-				ref = r
-			}
-		}
-		to := spec.TokenRef{}
-		switch c.loc {
-		case "header":
-			to.Header = c.name
-		case "query":
-			to.Query = c.name
-		default:
-			to.Body = c.name
-		}
-		name := spec.UniqueName(spec.SanitizeName(c.name, 60), taken)
-		res.flows = append(res.flows, spec.TokenFlow{Name: name, From: ref, To: to, Prefix: c.prefix})
-		res.carriers = append(res.carriers, k)
-	}
-	var unknown []string
-	for ln, name := range secretHeaders {
-		if byKey["header\x00"+ln] == nil {
-			unknown = append(unknown, name)
-		}
-	}
-	sort.Strings(unknown)
-	for _, name := range unknown {
-		res.notes = append(res.notes, fmt.Sprintf("Requests send the %s header, which looks like a credential, but its value was not found in any response, so it is left out of the spec. If the device needs it, add it in the generated server's custom.go.", name))
-	}
-	return res
-}
-
-func unescapeQuery(v string) string {
-	if u, err := url.QueryUnescape(v); err == nil {
-		return u
-	}
-	return v
-}
-
-// walkLeaves calls fn with the dotted path and value of every string leaf.
-func walkLeaves(prefix string, v any, fn func(path, value string)) {
-	switch x := v.(type) {
-	case string:
-		if prefix != "" {
-			fn(prefix, x)
-		}
-	case map[string]any:
-		for _, k := range sortedKeys(x) {
-			p := k
-			if prefix != "" {
-				p = prefix + "." + k
-			}
-			walkLeaves(p, x[k], fn)
-		}
-	case []any:
-		for i, val := range x {
-			p := strconv.Itoa(i)
-			if prefix != "" {
-				p = prefix + "." + p
-			}
-			walkLeaves(p, val, fn)
-		}
-	}
 }
 
 // notLoggedInPhrases are response texts that mean the session has expired.

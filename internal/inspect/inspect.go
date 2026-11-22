@@ -228,6 +228,9 @@ func Spec(w io.Writer, s *spec.Spec) error {
 						parts = append(parts, fmt.Sprintf("%s %q", kv[0], kv[1]))
 					}
 				}
+				if c.IndexField != "" && c.IndexBase != 0 {
+					parts = append(parts, fmt.Sprintf("first index %d", c.IndexBase))
+				}
 				desc += fmt.Sprintf(", chunked by %d bytes (%s)", c.ChunkSize, strings.Join(parts, ", "))
 			}
 			fmt.Fprintf(tw, "  %s\t%s\n", t.Name, desc)
@@ -274,6 +277,8 @@ func printAuth(w io.Writer, a *spec.Auth) {
 		fmt.Fprintln(w, "  the server replays the login request with the username and password")
 	case "browser":
 		fmt.Fprintln(w, "  the page scrambles the password, so the server logs in through headless Chrome")
+	case "basic":
+		fmt.Fprintln(w, "  HTTP Basic auth: every request carries the username and password")
 	}
 	tw := newTable(w, 1)
 	if l := a.Login; l != nil {
@@ -295,7 +300,11 @@ func printAuth(w io.Writer, a *spec.Auth) {
 		if tf.Prefix != "" {
 			to += fmt.Sprintf(", prefixed %q", tf.Prefix)
 		}
-		fmt.Fprintf(tw, "  token:\t%s: %s -> %s\n", tf.Name, tokenRef(tf.From), to)
+		from := tokenRef(tf.From)
+		if r := tf.Request; r != nil {
+			from += fmt.Sprintf(" of %s %s", r.Method, r.Path)
+		}
+		fmt.Fprintf(tw, "  token:\t%s: %s -> %s\n", tf.Name, from, to)
 	}
 	if len(a.ReloginOn) > 0 || a.ReloginBodyContains != "" {
 		var codes []string
@@ -319,8 +328,8 @@ func printAuth(w io.Writer, a *spec.Auth) {
 
 func tokenRef(r spec.TokenRef) string {
 	for _, kv := range [][2]string{
-		{"response_json", r.ResponseJSON}, {"response_header", r.ResponseHeader}, {"cookie", r.Cookie},
-		{"header", r.Header}, {"query", r.Query}, {"body", r.Body},
+		{"response_json", r.ResponseJSON}, {"response_text", r.ResponseText}, {"response_header", r.ResponseHeader},
+		{"cookie", r.Cookie}, {"header", r.Header}, {"query", r.Query}, {"body", r.Body}, {"path", r.Path},
 	} {
 		if kv[1] != "" {
 			return kv[0] + " " + kv[1]

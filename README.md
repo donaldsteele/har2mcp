@@ -324,6 +324,8 @@ It works poorly or not at all on:
 - sites that sign each request with secret JavaScript, which is common on
   large consumer sites;
 - logins that need a fresh MFA or 2FA code each time;
+- HTTP Digest authentication, which some older IP cameras and printers use
+  (HTTP Basic auth, where the browser shows its own sign-in box, works);
 - single sign-on redirect chains, such as "Sign in with Google";
 - apps that only use WebSockets (WebSocket traffic is recorded but not
   turned into tools);

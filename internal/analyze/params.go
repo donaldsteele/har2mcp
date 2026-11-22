@@ -26,7 +26,8 @@ type field struct {
 // filePart is a multipart part carrying a file.
 type filePart struct {
 	name, fileName, contentType string
-	size                        int64 // -1 when the recording has no bytes
+	size                        int64 // -1 when unknown
+	inferred                    bool  // size comes from the body size, not the bytes
 }
 
 type parsedRequest struct {
@@ -71,6 +72,7 @@ func parseRequest(e *har.Entry, u *url.URL) parsedRequest {
 	case p.mime == "multipart/form-data":
 		p.bodyType = "multipart"
 		parseMultipart(&p, pd)
+		inferFileSize(&p, e)
 	case p.mime == "application/x-www-form-urlencoded":
 		p.bodyType = "form"
 		var vals url.Values
@@ -160,6 +162,25 @@ func parseMultipart(p *parsedRequest, pd *har.PostData) {
 			addField(part.FormName(), string(data))
 		}
 		part.Close()
+	}
+}
+
+// inferFileSize works out the size of a multipart upload's one file part
+// when the recording has no bytes for it. Chrome leaves file contents out
+// of the request body it reports, but the body size (Content-Length) counts
+// them, so the file is the difference.
+func inferFileSize(p *parsedRequest, e *har.Entry) {
+	pd := e.Request.PostData
+	if len(p.files) != 1 || p.files[0].size >= 0 || pd == nil || pd.Text == "" || pd.Truncated {
+		return
+	}
+	total := e.Request.BodySize
+	if cl, err := strconv.ParseInt(strings.TrimSpace(e.Request.Header("Content-Length")), 10, 64); err == nil && cl > total {
+		total = cl
+	}
+	if n := total - int64(len(pd.Text)); n > 0 {
+		p.files[0].size = n
+		p.files[0].inferred = true
 	}
 }
 
@@ -349,8 +370,7 @@ func decideFields(rec *recording, op *operation, au *authResult, d *draft, chunk
 		}
 		inputs = append(inputs, in)
 	}
-	fixed := func(fs *fieldStat) {
-		v := fs.vals[0]
+	fixedAs := func(fs *fieldStat, v any) {
 		if fs.loc == "query" {
 			if t.Request.Query == nil {
 				t.Request.Query = map[string]any{}
@@ -367,6 +387,7 @@ func decideFields(rec *recording, op *operation, au *authResult, d *draft, chunk
 			t.Request.Body[fs.path] = v
 		}
 	}
+	fixed := func(fs *fieldStat) { fixedAs(fs, fs.vals[0]) }
 
 	for _, fs := range collectFields(op) {
 		present := len(fs.smps) == n
@@ -379,8 +400,16 @@ func decideFields(rec *recording, op *operation, au *authResult, d *draft, chunk
 		case fs.loc == "body" && chunkFields[fs.path]:
 			continue
 		}
-		label, password, typedOK := rec.typedMatch(fs)
+		if ph := cacheBuster(fs); ph != "" {
+			fixedAs(fs, ph)
+			continue
+		}
+		label, password, typedOK := rec.typedMatch(fs, au.loginSteps)
 		switch {
+		case !typedOK && isSessionTokenField(fs.path) && allTokenish(fs.vals):
+			// A session token whose source was not found: Claude cannot
+			// know it, so it is never an input.
+			d.note("%s field %q looks like a session token, but har2mcp did not find which response it comes from, so it is left out of the request; describe it in auth.session.tokens, or make it an input", fs.loc, fs.path)
 		case isSecretField(fs.path) || password:
 			input(fs, present, label, false)
 		case d.file != "" && isPathLike(fs):
@@ -406,10 +435,12 @@ func decideFields(rec *recording, op *operation, au *authResult, d *draft, chunk
 }
 
 // typedMatch reports whether a field carried a value the user typed, and
-// returns that form field's label. A value typed in the same step always
-// counts; one typed in another step counts when it is at least 3
-// characters, so short values do not match by chance.
-func (rec *recording) typedMatch(fs *fieldStat) (label string, password, ok bool) {
+// returns that form field's label and whether it holds a secret. A value
+// typed in the same step always counts; one typed in another step counts
+// when it is at least 3 characters, so short values do not match by chance,
+// and was not typed while logging in (loginSteps): a user name such as
+// "admin" is not the "group: admin" of a later request.
+func (rec *recording) typedMatch(fs *fieldStat, loginSteps map[int]bool) (label string, password, ok bool) {
 	for pass := 0; pass < 2; pass++ {
 		for i, v := range fs.vals {
 			str, isScalar := scalarString(v)
@@ -422,14 +453,94 @@ func (rec *recording) typedMatch(fs *fieldStat) (label string, password, ok bool
 					continue
 				}
 				same := s.step >= 0 && tv.step == s.step
-				if (pass == 0 && !same) || (pass == 1 && len(str) < 3) {
+				if (pass == 0 && !same) || (pass == 1 && (len(str) < 3 || loginSteps[tv.step])) {
 					continue
 				}
-				return typedLabel(tv.input), strings.EqualFold(tv.input.Type, "password"), true
+				return typedLabel(tv.input), har.IsSecretInput(tv.input), true
 			}
 		}
 	}
 	return "", false, false
+}
+
+// allTokenish reports whether every value looks like a session token.
+func allTokenish(vals []any) bool {
+	for _, v := range vals {
+		s, ok := v.(string)
+		if !ok || !looksTokenish(s) {
+			return false
+		}
+	}
+	return len(vals) > 0
+}
+
+// cacheBusterNames are query parameters that scripts fill with the time or
+// a random number so the browser does not cache the response: jQuery's
+// "_", ExtJS's "_dc" and the like. "time" is left out: it is as often a
+// time the user picked.
+var cacheBusterNames = map[string]bool{
+	"_": true, "_dc": true, "_t": true, "t": true, "ts": true, "_ts": true, "timestamp": true,
+	"nocache": true, "_nocache": true, "cachebuster": true, "cb": true, "_cb": true, "rnd": true, "_rnd": true,
+	"rand": true, "random": true, "r": true, "_r": true,
+}
+
+// cacheBuster returns the placeholder that replaces a cache-busting query
+// parameter: {{now_ms}} or {{now_s}} for the current time in milliseconds
+// or seconds, {{random}} for a random number between 0 and 1. The generated
+// server fills it in on every call. It returns "" for other fields.
+//
+// A time stamped by a script grows from one request to the next, so a time
+// that goes back between two requests of one recording was chosen by the
+// user and is not a cache buster.
+func cacheBuster(fs *fieldStat) string {
+	if fs.loc != "query" || !cacheBusterNames[strings.ToLower(fs.path)] {
+		return ""
+	}
+	kind := ""
+	type stamp struct {
+		har, seq int
+		n        int64
+	}
+	var stamps []stamp
+	for i, v := range fs.vals {
+		s, ok := scalarString(v)
+		if !ok {
+			return ""
+		}
+		k := ""
+		n, err := strconv.ParseInt(s, 10, 64)
+		switch {
+		case err == nil && len(s) == 13 && n >= 1e12 && n < 4.2e12:
+			k = "{{now_ms}}"
+		case err == nil && len(s) == 10 && n >= 1e9 && n < 4.2e9:
+			k = "{{now_s}}"
+		case strings.HasPrefix(s, "0.") && len(s) >= 6:
+			if f, err := strconv.ParseFloat(s, 64); err == nil && f > 0 && f < 1 {
+				k = "{{random}}"
+			}
+		}
+		if k == "" || (kind != "" && k != kind) {
+			return ""
+		}
+		kind = k
+		if i < len(fs.smps) {
+			stamps = append(stamps, stamp{fs.smps[i].har, fs.smps[i].seq, n})
+		}
+	}
+	if kind != "{{random}}" {
+		sort.Slice(stamps, func(i, j int) bool {
+			if stamps[i].har != stamps[j].har {
+				return stamps[i].har < stamps[j].har
+			}
+			return stamps[i].seq < stamps[j].seq
+		})
+		for i := 1; i < len(stamps); i++ {
+			if stamps[i].har == stamps[i-1].har && stamps[i].n < stamps[i-1].n {
+				return ""
+			}
+		}
+	}
+	return kind
 }
 
 func typedLabel(in har.TypedInput) string {

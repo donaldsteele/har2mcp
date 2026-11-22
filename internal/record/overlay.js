@@ -208,11 +208,17 @@
     Array.from(pending).forEach(reportField);
   }
 
-  // Login capture: a form (or page) with exactly one filled password field.
+  // Login capture: a form (or page) with exactly one filled, visible
+  // password field. A later capture of the same form replaces an earlier
+  // one in the recorder, so a click on a show-password toggle before the
+  // real login button is corrected by the click that follows.
   let pwDirty = false;
   let lastLogin = { key: '', t: 0 };
+  function visible(el) {
+    return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  }
   function loginParts(scope) {
-    const pws = Array.prototype.filter.call(scope.querySelectorAll('input[type=password]'), (i) => i.value);
+    const pws = Array.prototype.filter.call(scope.querySelectorAll('input[type=password]'), (i) => i.value && visible(i));
     if (pws.length !== 1) return null;
     const pw = pws[0];
     const users = Array.prototype.filter.call(
@@ -224,21 +230,40 @@
     );
     return { pw: pw, user: users.length ? users[users.length - 1] : null };
   }
-  function emitLogin(parts, submit) {
-    const key = (parts.user ? parts.user.value : '') + '\u0000' + parts.pw.value;
+  // emitLogin reports a login. submit is the control that sent it, or null
+  // for the Enter key (the generated server then presses Enter too). final
+  // is set for a form submit or Enter; a button click may still be followed
+  // by the real login button.
+  function emitLogin(parts, submit, final) {
+    if (final) pwDirty = false;
+    const sel = submit ? selectorOf(submit) : '';
+    const key = (parts.user ? parts.user.value : '') + '\u0000' + parts.pw.value + '\u0000' + sel;
     const t = now();
     if (key === lastLogin.key && t - lastLogin.t < 1500) return;
     lastLogin = { key: key, t: t };
-    pwDirty = false;
     emit({
       type: 'login_submit',
       usernameSelector: parts.user ? selectorOf(parts.user) : '',
       passwordSelector: selectorOf(parts.pw),
-      submitSelector: submit ? selectorOf(submit) : '',
+      submitSelector: sel,
       username: parts.user ? parts.user.value : '',
       password: parts.pw.value,
       pageUrl: location.href,
     });
+  }
+
+  // buttonLike reports whether a clicked element can send a form: a button
+  // or link, or an element the page made clickable.
+  function buttonLike(el) {
+    const r = roleOf(el);
+    if (r === 'button' || r === 'link' || r === 'menuitem') return true;
+    if (r !== '' || el.localName === 'label' || el.localName === 'body' || el.localName === 'html') return false;
+    if (el.hasAttribute('onclick')) return true;
+    try {
+      return getComputedStyle(el).cursor === 'pointer';
+    } catch (e) {
+      return false;
+    }
   }
 
   const CLICKABLE =
@@ -263,10 +288,14 @@
         role: roleOf(el),
         selector: selectorOf(el),
       });
-      // A login button outside any form: the password field was just typed in.
-      if (pwDirty && roleOf(el) === 'button' && !el.form) {
-        const parts = loginParts(document);
-        if (parts && !parts.pw.form) emitLogin(parts, el);
+      // A click on a button after typing a password may be the login: a
+      // button outside any form, or one inside a form that the page sends
+      // from script (a type=button button, as Element-UI and Vue forms
+      // use, so no submit event follows). A real submit button also fires
+      // the submit event below, which reports the same capture.
+      if (pwDirty && buttonLike(el)) {
+        const parts = loginParts(el.form || document);
+        if (parts) emitLogin(parts, el, false);
       }
     },
     true
@@ -302,7 +331,7 @@
       const form = e.target;
       if (!form || form.localName !== 'form') return;
       const parts = loginParts(form);
-      if (parts) emitLogin(parts, e.submitter || form.querySelector('[type=submit],button:not([type])'));
+      if (parts) emitLogin(parts, e.submitter || form.querySelector('[type=submit],button:not([type])'), true);
     },
     true
   );
@@ -313,11 +342,13 @@
       if (e.key !== 'Enter' || fromOverlay(e)) return;
       flushFields();
       const el = realTarget(e);
-      // Enter in a field outside a form submits nothing by itself; if it is
-      // a login field, the page's own key handler logs in.
-      if (isField(el) && !el.form && pwDirty) {
-        const parts = loginParts(document);
-        if (parts && !parts.pw.form) emitLogin(parts, null);
+      // Enter in a login field: the page's own key handler logs in, or the
+      // browser submits the form (the submit event then reports its
+      // button). The capture records no submit button, so the generated
+      // server presses Enter as well.
+      if (isField(el) && pwDirty) {
+        const parts = loginParts(el.form || document);
+        if (parts) emitLogin(parts, null, true);
       }
     },
     true

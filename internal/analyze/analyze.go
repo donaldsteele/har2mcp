@@ -69,44 +69,22 @@ func Analyze(hars []*har.HAR, opts Options) (*spec.Spec, error) {
 		return nil, errors.New("the HAR files contain no HTTP requests")
 	}
 
-	// calls are the API requests that can become tools; authCands also
-	// include page form posts, which can be a classic login.
-	var calls, authCands []*sample
-	onHost := 0
-	for _, s := range rec.samples {
-		if !hostMatches(s.u, hosts) {
-			continue
-		}
-		onHost++
-		switch {
-		case !isStatic(s):
-			calls = append(calls, s)
-			authCands = append(authCands, s)
-		case isFormPost(s):
-			authCands = append(authCands, s)
-		}
-	}
-
-	au := detectAuth(rec, authCands)
-
-	// The login's operation is not a tool, and every step it happens in
-	// (one per recording) is a login step.
-	var ops []*operation
-	for _, op := range group(rec, calls) {
-		if !op.containsAny(au.login) {
-			ops = append(ops, op)
-			continue
-		}
-		for _, s := range op.samples {
-			if s.step >= 0 {
-				au.loginSteps[s.step] = true
+	r := analyzeHosts(rec, hosts)
+	if len(r.ops) == 0 && len(opts.Hosts) == 0 {
+		// The start page may have sent the browser to another host by
+		// script (tplinkwifi.net -> 192.168.0.1); try the host the browser
+		// went to that most API calls went to.
+		if busy := navigatedHosts(rec); len(busy) > 0 && !hostMatchesAny(busy, hosts) {
+			if r2 := analyzeHosts(rec, union(hosts, busy)); len(r2.ops) > 0 {
+				hosts, r = union(hosts, busy), r2
 			}
 		}
 	}
-	if len(ops) == 0 {
+	if len(r.ops) == 0 {
 		return nil, fmt.Errorf("found no API calls to %s: %d requests in total, %d to that host, all of them static files, pages or the login. If the device's API is on another host, pass it with --host",
-			strings.Join(hosts, ", "), len(rec.samples), onHost)
+			strings.Join(hosts, ", "), len(rec.samples), len(r.onHost))
 	}
+	au, ops, calls := r.au, r.ops, r.calls
 
 	drafts := make([]*draft, 0, len(ops))
 	for _, op := range ops {
@@ -116,7 +94,7 @@ func Analyze(hars []*har.HAR, opts Options) (*spec.Spec, error) {
 
 	s := &spec.Spec{
 		Har2mcp: spec.FormatVersion,
-		Service: spec.Service{Hosts: hosts, BaseURL: baseURL(rec, hosts, calls)},
+		Service: spec.Service{Hosts: hosts, BaseURL: baseURL(rec, hosts, calls, au)},
 		Auth:    au.spec,
 	}
 	s.Service.Name = opts.Name
@@ -377,9 +355,85 @@ func (rec *recording) captureFor(hi, firstStep int, meta *har.Meta) (capture, bo
 	return capture{}, false
 }
 
-// baseURL is scheme://host of the start URL when it is on the analyzed
-// hosts, else of the first API call.
-func baseURL(rec *recording, hosts []string, calls []*sample) string {
+// hostsResult is the analysis of the requests to one set of hosts.
+type hostsResult struct {
+	onHost []*sample // every request to the hosts, in time order
+	calls  []*sample // the API calls among them
+	au     *authResult
+	ops    []*operation // the operations that become tools
+}
+
+// analyzeHosts runs the filter, auth and group stages on the requests to
+// hosts.
+func analyzeHosts(rec *recording, hosts []string) hostsResult {
+	var r hostsResult
+	// calls are the API requests that can become tools; authCands also
+	// include page form posts, which can be a classic login.
+	var authCands []*sample
+	for _, s := range rec.samples {
+		if !hostMatches(s.u, hosts) {
+			continue
+		}
+		r.onHost = append(r.onHost, s)
+		switch {
+		case !isStatic(s):
+			r.calls = append(r.calls, s)
+			authCands = append(authCands, s)
+		case isFormPost(s):
+			authCands = append(authCands, s)
+		}
+	}
+
+	r.au = detectAuth(rec, authCands, r.onHost)
+
+	// The login's operation is not a tool, and every step it happens in
+	// (one per recording) is a login step.
+	for _, op := range group(rec, r.calls, r.au.pathTokens) {
+		if !op.containsAny(r.au.login) {
+			r.ops = append(r.ops, op)
+			continue
+		}
+		for _, s := range op.samples {
+			if s.step >= 0 {
+				r.au.loginSteps[s.step] = true
+			}
+		}
+	}
+	return r
+}
+
+// baseURL is the origin (scheme://host[:port]) the device's API ran on: the
+// login request's, else the one most API calls went to, else the start
+// URL's. The start URL can differ: a device typed as http://nas:8181 may
+// redirect to https://nas:5443, where the API really is.
+func baseURL(rec *recording, hosts []string, calls []*sample, au *authResult) string {
+	var login *sample
+	for s := range au.login {
+		if login == nil || s.seq < login.seq {
+			login = s
+		}
+	}
+	if login != nil {
+		return login.u.Scheme + "://" + login.u.Host
+	}
+	count := map[string]int{}
+	var order []string
+	for _, s := range calls {
+		o := s.u.Scheme + "://" + s.u.Host
+		if count[o] == 0 {
+			order = append(order, o)
+		}
+		count[o]++
+	}
+	best := ""
+	for _, o := range order {
+		if best == "" || count[o] > count[best] {
+			best = o
+		}
+	}
+	if best != "" {
+		return best
+	}
 	for _, h := range rec.hars {
 		if m := h.Log.Har2mcp; m != nil && m.StartURL != "" {
 			if u, err := url.Parse(m.StartURL); err == nil && u.Host != "" && hostMatches(u, hosts) {
@@ -387,10 +441,21 @@ func baseURL(rec *recording, hosts []string, calls []*sample) string {
 			}
 		}
 	}
-	for _, s := range calls {
-		return s.u.Scheme + "://" + s.u.Host
-	}
 	return ""
+}
+
+func union(a, b []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, list := range [][]string{a, b} {
+		for _, s := range list {
+			if !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
+	}
+	return out
 }
 
 // relativeURL returns the path, query and fragment of a URL, so it can be

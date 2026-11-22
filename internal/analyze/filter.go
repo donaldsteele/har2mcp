@@ -14,8 +14,9 @@ import (
 )
 
 // pickHosts returns the hosts to analyze: the ones given (normalized), else
-// the start URL hosts of the recordings, else the host most XHR and fetch
-// calls went to.
+// the start URL hosts of the recordings and the hosts their redirects led
+// to (http://tplinkwifi.net -> http://192.168.0.1), else the host most XHR
+// and fetch calls went to.
 func pickHosts(rec *recording, given []string) []string {
 	var hosts []string
 	seen := map[string]bool{}
@@ -43,13 +44,112 @@ func pickHosts(rec *recording, given []string) []string {
 		if m := h.Log.Har2mcp; m != nil && m.StartURL != "" {
 			if u, err := url.Parse(m.StartURL); err == nil && u.Hostname() != "" {
 				add(u.Hostname())
+				for _, r := range redirectChain(h, u) {
+					add(r.Hostname())
+				}
 			}
 		}
 	}
 	if len(hosts) > 0 {
 		return hosts
 	}
+	return busiestHosts(rec)
+}
 
+// redirectChain follows the redirects recorded for start: each entry for
+// the current URL with a 3xx status and a redirect target leads to the
+// next. It returns the URLs the redirects led to.
+func redirectChain(h *har.HAR, start *url.URL) []*url.URL {
+	var out []*url.URL
+	cur := start
+	for n := 0; n < 10; n++ {
+		var next *url.URL
+		for i := range h.Log.Entries {
+			e := &h.Log.Entries[i]
+			if e.Response.Status < 300 || e.Response.Status > 399 {
+				continue
+			}
+			u, err := url.Parse(e.Request.URL)
+			if err != nil || !sameURL(u, cur) {
+				continue
+			}
+			loc := e.Response.RedirectURL
+			if loc == "" {
+				loc = e.Response.Header("Location")
+			}
+			if t, err := cur.Parse(loc); err == nil && loc != "" && t.Hostname() != "" {
+				next = t
+				break
+			}
+		}
+		if next == nil || sameURL(next, cur) {
+			break
+		}
+		out = append(out, next)
+		cur = next
+	}
+	return out
+}
+
+// sameURL reports whether two URLs have the same scheme, host and path
+// ("" and "/" count as the same path).
+func sameURL(a, b *url.URL) bool {
+	pa, pb := a.EscapedPath(), b.EscapedPath()
+	if pa == "" {
+		pa = "/"
+	}
+	if pb == "" {
+		pb = "/"
+	}
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host) && pa == pb
+}
+
+// hostMatchesAny reports whether any of hosts matches one of others.
+func hostMatchesAny(hosts, others []string) bool {
+	for _, h := range hosts {
+		u := &url.URL{Host: h}
+		if hostMatches(u, others) {
+			return true
+		}
+	}
+	return false
+}
+
+// navigatedHosts returns, as a one-element list, the host that most API
+// calls went to among the hosts the browser loaded a page from, or nil.
+// Third-party hosts such as analytics get calls but no page load, so they
+// are never picked.
+func navigatedHosts(rec *recording) []string {
+	pages := map[string]bool{}
+	for _, s := range rec.samples {
+		rt := strings.ToLower(s.e.ResourceType)
+		if rt == "document" || (rt == "" && strings.EqualFold(s.e.Request.Method, "GET") && responseMIME(s.e) == "text/html") {
+			pages[strings.ToLower(s.u.Hostname())] = true
+		}
+	}
+	count := map[string]int{}
+	best := ""
+	for _, s := range rec.samples {
+		h := strings.ToLower(s.u.Hostname())
+		if !pages[h] || isStatic(s) {
+			continue
+		}
+		count[h]++
+		if best == "" || count[h] > count[best] {
+			best = h
+		}
+	}
+	if best == "" {
+		return nil
+	}
+	return []string{best}
+}
+
+// busiestHosts returns the host most XHR and fetch calls went to (most
+// non-static requests when the HAR does not say which are XHR), as a
+// one-element list, or nil when there are no requests.
+func busiestHosts(rec *recording) []string {
+	var hosts []string
 	count := map[string]int{}
 	first := map[string]int{}
 	tally := func(s *sample) {
@@ -81,8 +181,8 @@ func pickHosts(rec *recording, given []string) []string {
 		}
 		return first[cands[i]] < first[cands[j]]
 	})
-	if len(cands) > 0 {
-		add(cands[0])
+	if len(cands) > 0 && cands[0] != "" {
+		hosts = append(hosts, cands[0])
 	}
 	return hosts
 }

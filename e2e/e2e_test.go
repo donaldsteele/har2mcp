@@ -477,6 +477,21 @@ func TestE2E_FileSandbox(t *testing.T) {
 		mustErr(t, cs, "download_file", map[string]any{"path": "/public/b.bin", "local_path": "link.txt"})
 	}
 
+	// A Windows directory junction pointing out of the files folder. Any
+	// user can make one (mklink /J needs no admin rights), and Go does not
+	// report it as a symlink by default, so filepath.EvalSymlinks would not
+	// follow it.
+	if runtime.GOOS == "windows" {
+		junction := filepath.Join(filesDir, "junction")
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", junction, outside).CombinedOutput(); err != nil {
+			t.Fatalf("mklink /J: %v\n%s", err, out)
+		}
+		mustErr(t, cs, "upload_file", map[string]any{"local_path": `junction\secret.txt`, "path": "/public"})
+		mustErr(t, cs, "download_file", map[string]any{"path": "/public/b.bin", "local_path": `junction\x.bin`})
+		mustErr(t, cs, "download_file", map[string]any{"path": "/public/b.bin", "local_path": `junction\new\x.bin`})
+		mustErr(t, cs, "download_file", map[string]any{"path": "/public/b.bin", "local_path": "junction"})
+	}
+
 	after := srv.Files()
 	if !maps.EqualFunc(before, after, bytes.Equal) {
 		t.Errorf("NAS files changed: before %v, after %v", slices.Sorted(maps.Keys(before)), slices.Sorted(maps.Keys(after)))

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -65,14 +64,6 @@ func runRecord(args []string) error {
 	if steps == 0 {
 		fmt.Println("No steps were labeled; analysis will name tools from the requests alone.")
 	}
-	fmt.Printf("Next: har2mcp analyze %s\n", shellQuote(*out))
+	fmt.Printf("Next: har2mcp analyze %s\n", quoteArg(*out))
 	return nil
-}
-
-// shellQuote quotes a file name for a command line the user may copy.
-func shellQuote(s string) string {
-	if s != "" && !strings.ContainsAny(s, " \t\"'$`\\!*?&;|<>()[]{}#~") {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

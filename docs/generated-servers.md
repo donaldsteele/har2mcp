@@ -106,19 +106,35 @@ The server logs in the first time Claude calls a tool, the way the spec's
   session cookies.
 - **`browser` mode:** it starts headless Chrome, opens `auth.login.page_url`,
   fills in the recorded username and password fields, clicks the submit
-  button, waits for the session cookie, and copies the cookies into its HTTP
-  client. Google Chrome, Chromium or Edge must be installed on the computer
-  that runs the server. Set `<P>_BROWSER` if it isn't in a standard place.
+  button (or presses Enter in the password field when no button was
+  recorded), waits for the session cookie, and copies the cookies into its
+  HTTP client. Google Chrome, Chromium or Edge must be installed on the
+  computer that runs the server. The server looks in the same places as
+  `har2mcp record`; set `<P>_BROWSER` if it isn't in a standard place.
+- **`basic` mode:** there is no login request. The server sends `<P>_USER`
+  and `<P>_PASSWORD` as HTTP Basic credentials with every request.
 
 After that it sends the session cookies with every request and copies tokens
 as `auth.session.tokens` describes, for example a CSRF token from the login
 response into an `X-Csrf-Token` header, or an access token into an
-`Authorization` header after the token's `prefix` (`Bearer `).
+`Authorization` header after the token's `prefix` (`Bearer `). A token that
+comes from another response, such as `GET /api/session`, is fetched right
+after the login. A token that goes in the URL path, such as OpenWrt's
+`;stok=`, fills the `{placeholder}` in each tool's path.
 
 When a response has a status listed in `auth.relogin_on` (usually 401 and
 403), or a body containing `auth.relogin_body_contains`, the server logs in
 again and retries the call once. A session that expired overnight is
-renewed without Claude noticing.
+renewed without Claude noticing. A call that has just logged in is not
+retried: if the fresh session fails at once, logging in again would not
+help.
+
+After a failed login the server returns the same error without contacting
+the device for a while: 15 minutes when the device rejected the login, 30
+seconds after a network error. Many NAS boxes and routers block an address
+after 5 to 10 failed logins, which also locks you out of their web page, and
+Claude retries failing tools. Fix `<P>_USER` or `<P>_PASSWORD` and restart
+the server.
 
 ## Tools
 
@@ -158,8 +174,8 @@ server, inside one folder: `<P>_FILES_DIR`, by default
 Paths are relative to the folder. A path that would leave it is refused
 with an error result, and nothing is read or written. That includes `..`
 segments (`../../etc/passwd`), absolute paths outside the folder, and
-symlinks that point outside it. "Full control" means control of the device,
-not of your disk.
+symlinks or Windows directory junctions that point outside it. "Full
+control" means control of the device, not of your disk.
 
 To give Claude a file to upload, put it in the folder first. Downloaded
 files appear there too.

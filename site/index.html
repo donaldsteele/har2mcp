@@ -347,7 +347,7 @@
           <ul>
             <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>JSON or XML APIs</b> behind a JavaScript web page: NAS boxes, routers, home-automation hubs, admin panels, most self-hosted apps.</span></li>
             <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>RPC-style endpoints,</b> one URL with an action field such as <code>act</code> or <code>method</code>, split into one tool per action. GraphQL fits the same way.</span></li>
-            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>Username and password logins,</b> including ones where the page scrambles the password before sending it: the generated server then logs in through headless Chrome.</span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>Username and password logins,</b> including ones where the page scrambles the password before sending it: the generated server then logs in through headless Chrome. HTTP Basic auth works too, for cameras and printers that show the browser's own sign-in box.</span></li>
             <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>Cookies, CSRF tokens and bearer tokens,</b> copied from response to request by the server.</span></li>
             <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>Self-signed certificates,</b> common on home networks: <code>--insecure</code> to record, <code>NAS_INSECURE=1</code> to run.</span></li>
             <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg><span><b>Uploads and downloads,</b> streamed through a local folder on the machine that runs the server.</span></li>
@@ -359,6 +359,7 @@
             <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>Bot protection,</b> such as Cloudflare challenges and CAPTCHAs.</span></li>
             <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>Requests signed by secret JavaScript,</b> common on large consumer sites.</span></li>
             <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>A fresh MFA or 2FA code at every login.</b></span></li>
+            <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>HTTP Digest authentication,</b> which some older cameras and printers use. Basic auth is fine.</span></li>
             <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>Single sign-on redirects,</b> such as "Sign in with Google".</span></li>
             <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>WebSocket-only apps.</b> WebSocket traffic is recorded, but not turned into tools in v0.1.</span></li>
             <li><svg class="ico" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg><span><b>Server-rendered HTML,</b> where each action loads a new page instead of calling an API.</span></li>

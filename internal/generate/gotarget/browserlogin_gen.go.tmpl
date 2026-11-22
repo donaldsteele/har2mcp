@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +19,7 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 )
 
 // The recorded login form, as CSS selectors.
@@ -51,6 +55,8 @@ func (c *Client) browserLogin(ctx context.Context) error {
 		opts = append(opts, chromedp.IgnoreCertErrors)
 	}
 	if p := os.Getenv(envPrefix + "_BROWSER"); p != "" {
+		opts = append(opts, chromedp.ExecPath(p))
+	} else if p := findBrowser(); p != "" {
 		opts = append(opts, chromedp.ExecPath(p))
 	}
 	if os.Geteuid() == 0 {
@@ -110,7 +116,10 @@ func (c *Client) browserLogin(ctx context.Context) error {
 	}
 
 	page := c.rebase(loginPageURL)
-	submit := chromedp.Submit(chromedp.CSS(loginPasswordSelector))
+	// With no recorded submit button, press Enter in the password field, as
+	// a person does. Real key events let the page's own handlers run (they
+	// scramble the password); submitting the form directly would skip them.
+	submit := chromedp.SendKeys(chromedp.CSS(loginPasswordSelector), kb.Enter)
 	if loginSubmitSelector != "" {
 		submit = chromedp.Click(chromedp.CSS(loginSubmitSelector))
 	}
@@ -137,7 +146,7 @@ func (c *Client) browserLogin(ctx context.Context) error {
 	for {
 		resp, seen := loginResponse()
 		if seen && resp.finished && resp.status >= 400 {
-			return fmt.Errorf("the device rejected the login (HTTP %d from %s); check %s_USER and %s_PASSWORD", resp.status, loginPath, envPrefix, envPrefix)
+			return &loginRejected{fmt.Errorf("the device rejected the login (HTTP %d from %s); check %s_USER and %s_PASSWORD", resp.status, loginPath, envPrefix, envPrefix)}
 		}
 		res, err := chromedp.CallBrowser(tabCtx, storage.GetCookies, storage.GetCookiesParams{})
 		if err != nil {
@@ -188,7 +197,7 @@ func (c *Client) browserLogin(ctx context.Context) error {
 		jarCookies = append(jarCookies, hc)
 	}
 	c.jar.SetCookies(c.base.JoinPath("/"), jarCookies)
-	c.captureTokens(header, body, nil)
+	c.captureTokens("", header, body, nil)
 	return nil
 }
 
@@ -240,9 +249,11 @@ func waitingFor(cookies []*network.Cookie, loginPath string) string {
 	return strings.Join(missing, ", ")
 }
 
+// tokensFromLoginResponse reports whether a session token is read from the
+// login response (rather than a cookie or another request).
 func tokensFromLoginResponse() bool {
 	for _, tf := range tokenFlows {
-		if f := tf.From; f.ResponseJSON != "" || f.Body != "" || f.ResponseHeader != "" || f.Header != "" {
+		if f := tf.From; tf.Request == nil && (f.ResponseJSON != "" || f.ResponseText != "" || f.Body != "" || f.ResponseHeader != "" || f.Header != "") {
 			return true
 		}
 	}
@@ -251,4 +262,85 @@ func tokensFromLoginResponse() bool {
 
 func browserError(err error) error {
 	return fmt.Errorf("browser login: %w (Chrome, Chromium or Edge must be installed where this server runs; set %s_BROWSER to its path if it is not found)", err, envPrefix)
+}
+
+// findBrowser returns the path of an installed Chrome, Chromium or Edge, in
+// that order, from each OS's usual install locations and then PATH, the
+// same way 'har2mcp record' looks. It returns "" when there is none.
+func findBrowser() string {
+	paths, names := browserCandidates(runtime.GOOS, os.Getenv)
+	for _, p := range paths {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+	}
+	for _, n := range names {
+		if p, err := exec.LookPath(n); err == nil && p != "" {
+			if abs, err := filepath.Abs(p); err == nil {
+				p = abs
+			}
+			return p
+		}
+	}
+	return ""
+}
+
+// browserCandidates lists absolute install paths and PATH names to try, in
+// order, for an OS. env reads environment variables. It is a copy of the
+// recorder's list in har2mcp (internal/record/browser.go).
+func browserCandidates(goos string, env func(string) string) (paths, names []string) {
+	switch goos {
+	case "windows":
+		var roots []string
+		for _, v := range []string{"ProgramFiles", "ProgramFiles(x86)", "LocalAppData", "ProgramW6432"} {
+			if r := env(v); r != "" {
+				roots = append(roots, r)
+			}
+		}
+		for _, rel := range []string{
+			`Google\Chrome\Application\chrome.exe`,
+			`Chromium\Application\chrome.exe`,
+			`Microsoft\Edge\Application\msedge.exe`,
+		} {
+			for _, r := range roots {
+				paths = append(paths, r+`\`+rel)
+			}
+		}
+		names = []string{"chrome.exe", "chromium.exe", "msedge.exe"}
+	case "darwin":
+		var homes []string
+		homes = append(homes, "")
+		if h := env("HOME"); h != "" {
+			homes = append(homes, h)
+		}
+		for _, app := range []string{
+			"Google Chrome.app/Contents/MacOS/Google Chrome",
+			"Chromium.app/Contents/MacOS/Chromium",
+			"Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+		} {
+			for _, h := range homes {
+				paths = append(paths, h+"/Applications/"+app)
+			}
+		}
+		names = []string{"google-chrome", "chromium", "microsoft-edge"}
+	default: // linux and the BSDs
+		paths = []string{
+			"/usr/bin/google-chrome",
+			"/usr/bin/google-chrome-stable",
+			"/opt/google/chrome/chrome",
+			"/usr/bin/chromium",
+			"/usr/bin/chromium-browser",
+			"/snap/bin/chromium",
+			"/usr/local/bin/chromium",
+			"/usr/bin/microsoft-edge",
+			"/usr/bin/microsoft-edge-stable",
+			"/opt/microsoft/msedge/msedge",
+		}
+		names = []string{
+			"google-chrome", "google-chrome-stable", "chrome",
+			"chromium", "chromium-browser",
+			"microsoft-edge", "microsoft-edge-stable", "msedge",
+		}
+	}
+	return paths, names
 }

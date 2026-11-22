@@ -23,9 +23,16 @@ spec, and generate a Go MCP server from it.
 - `har2mcp analyze <file.har>...` turns recordings, or plain HAR files
   exported from browser developer tools, into a spec:
   - finds the login and whether the password is sent as typed (`http` mode)
-    or scrambled in the page (`browser` mode);
+    or scrambled in the page (`browser` mode), or HTTP Basic auth (`basic`
+    mode);
   - finds session cookies, CSRF and header tokens (including `Bearer`
-    access tokens), and when to log in again;
+    access tokens, tokens in XML or HTML responses, tokens from a request
+    other than the login, and session tokens in the URL path such as
+    OpenWrt's `;stok=`), and when to log in again;
+  - follows the start page's redirects and uses the address the API really
+    ran on;
+  - replaces cache-busting query parameters (`_`, `_dc`) with the current
+    time;
   - groups requests into operations, with path parameters and one operation
     per action value on RPC-style endpoints (`act`, `action`, `method`,
     GraphQL `operationName`, and similar);
@@ -47,6 +54,8 @@ spec, and generate a Go MCP server from it.
   - one tool per enabled spec tool, with read-only and destructive hints;
   - logs in on the first call and again on 401/403 or a "not logged in"
     response, then retries once;
+  - after a failed login, waits before trying again so a wrong password
+    can't trip the device's lockout;
   - headless Chrome login for `browser` mode;
   - streaming uploads and downloads confined to `<P>_FILES_DIR`;
   - results capped at 100000 bytes;

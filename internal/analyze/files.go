@@ -46,6 +46,7 @@ var (
 	chunkIndexNames  = []string{"chunkindex", "chunk", "chunknumber", "chunkno", "index", "part", "partnumber", "partindex", "partno", "resumablechunknumber", "dzchunkindex", "flowchunknumber"}
 	chunkTotalNames  = []string{"total", "totalsize", "filesize", "size", "totalbytes", "fullsize", "resumabletotalsize", "dztotalfilesize", "flowtotalsize"}
 	chunkCountNames  = []string{"totalchunks", "chunks", "chunkcount", "numchunks", "resumabletotalchunks", "dztotalchunkcount", "flowtotalchunks", "totalparts", "partcount"}
+	chunkSizeNames   = []string{"chunksize", "resumablechunksize", "dzchunksize", "flowchunksize", "blocksize", "partsize", "chunklength"}
 )
 
 func normName(s string) string {
@@ -72,6 +73,12 @@ type chunkResult struct {
 // endpoint whose offset (or chunk index) grows by a fixed chunk size. Only
 // a consistent pattern is modeled; anything else that looks chunked is
 // flagged for review rather than guessed.
+//
+// The chunk size comes from the offsets, else from a chunk-size field of
+// the upload protocol (resumableChunkSize, dzchunksize, ...), else from the
+// size of the first chunk. Chrome does not record file bytes, so that size
+// is usually worked out from the request's body size (see inferFileSize).
+// The chunk index may start at 0 or 1; IndexBase records which.
 func detectChunking(op *operation, part string) chunkResult {
 	var res chunkResult
 	stats := collectFields(op)
@@ -112,6 +119,7 @@ func detectChunking(op *operation, part string) chunkResult {
 	offF, offs := find(chunkOffsetNames)
 	idxF, idxs := find(chunkIndexNames)
 	totF, tots := find(chunkTotalNames)
+	sizeF, sizeVals := find(chunkSizeNames)
 	var countF *fieldStat
 	for _, fs := range stats {
 		if nameIn(lastSegment(fs.path), chunkCountNames) {
@@ -133,12 +141,14 @@ func detectChunking(op *operation, part string) chunkResult {
 	// The file part's size in each sample, -1 when unknown.
 	sizes := make([]int64, n)
 	names := map[string]bool{}
+	inferred := false
 	for i, s := range op.samples {
 		sizes[i] = -1
 		for _, f := range s.req.files {
 			if f.name == part {
 				sizes[i] = f.size
 				names[f.fileName] = true
+				inferred = inferred || f.inferred
 			}
 		}
 	}
@@ -173,9 +183,15 @@ func detectChunking(op *operation, part string) chunkResult {
 	}
 	sort.SliceStable(order, func(a, b int) bool { return key[order[a]] < key[order[b]] })
 
-	size := sizes[order[0]]
-	if size <= 0 && offF != nil {
+	var size int64
+	fromParts := false
+	switch {
+	case offF != nil:
 		size = offs[order[1]] - offs[order[0]]
+	case sizeF != nil && distinctCount(sizeF.vals) == 1:
+		size = sizeVals[0]
+	default:
+		size, fromParts = sizes[order[0]], true
 	}
 	if size <= 0 {
 		return unrecognized("the chunk size is unknown")
@@ -202,9 +218,24 @@ func detectChunking(op *operation, part string) chunkResult {
 		if offF != nil && sizes[last] > 0 && tots[last] < offs[last]+sizes[last] {
 			return unrecognized(fmt.Sprintf("%s is smaller than the data sent", totF.path))
 		}
+		if fromParts && inferred {
+			sum := int64(0)
+			for _, s := range sizes {
+				sum += s
+			}
+			if sum != tots[last] {
+				return unrecognized(fmt.Sprintf("the chunk sizes worked out from the request sizes add up to %d, not %s %d", sum, totF.path, tots[last]))
+			}
+		}
+	}
+	if fromParts && inferred && totF == nil {
+		res.notes = append(res.notes, fmt.Sprintf("the chunk size (%d bytes) was worked out from the request sizes, because the recording has no file bytes; check file.chunked.chunk_size", size))
 	}
 
 	c := &spec.Chunking{ChunkSize: size}
+	if idxF != nil {
+		c.IndexBase = idxs[order[0]]
+	}
 	res.fields = map[string]bool{}
 	if offF != nil {
 		c.OffsetField = offF.path

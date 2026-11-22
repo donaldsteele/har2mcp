@@ -17,7 +17,7 @@ var (
 )
 
 var (
-	authModes  = []string{"none", "http", "browser"}
+	authModes  = []string{"none", "http", "browser", "basic"}
 	toolKinds  = []string{"read", "change", "destructive"}
 	inputTypes = []string{"string", "integer", "number", "boolean", "array", "object"}
 	inputIns   = []string{"path", "query", "body", "file"}
@@ -86,12 +86,44 @@ func (s *Spec) Validate() error {
 			}
 		}
 	}
+	tokenPaths := map[string]bool{}
 	for i, tf := range a.Session.Tokens {
+		where := fmt.Sprintf("auth.session.tokens[%d] (%s)", i, tf.Name)
 		if n := tf.From.count(); n != 1 {
-			add("auth.session.tokens[%d] (%s): from must set exactly one of response_json, response_header, cookie, header, query, body (has %d)", i, tf.Name, n)
+			add("%s: from must set exactly one of response_json, response_text, response_header, cookie, header, query, body (has %d)", where, n)
 		}
 		if n := tf.To.count(); n != 1 {
-			add("auth.session.tokens[%d] (%s): to must set exactly one of response_json, response_header, cookie, header, query, body (has %d)", i, tf.Name, n)
+			add("%s: to must set exactly one of header, query, body, cookie, path (has %d)", where, n)
+		}
+		if tf.From.Path != "" {
+			add("%s: from.path is not a token source; path is only used in to", where)
+		}
+		if tf.To.ResponseText != "" {
+			add("%s: to.response_text is not a place to send a token; response_text is only used in from", where)
+		}
+		if tf.From.ResponseText != "" {
+			if re, err := regexp.Compile(tf.From.ResponseText); err != nil {
+				add("%s: from.response_text is not a valid regular expression: %v", where, err)
+			} else if re.NumSubexp() < 1 {
+				add("%s: from.response_text needs a group, such as <SID>([0-9a-f]+)</SID>, around the token", where)
+			}
+		}
+		if tf.To.Path != "" {
+			if strings.ContainsAny(tf.To.Path, "{}/") {
+				add("%s: to.path %q is a placeholder name, without braces or slashes", where, tf.To.Path)
+			}
+			tokenPaths[tf.To.Path] = true
+		}
+		if r := tf.Request; r != nil {
+			if !methodRE.MatchString(r.Method) {
+				add("%s: request.method %q must be an upper-case HTTP method", where, r.Method)
+			}
+			if !strings.HasPrefix(r.Path, "/") {
+				add("%s: request.path %q must start with /", where, r.Path)
+			}
+			if r.BodyType != "" && !oneOf(r.BodyType, bodyTypes) {
+				add("%s: request.body_type %q must be one of %s", where, r.BodyType, strings.Join(bodyTypes, ", "))
+			}
 		}
 		if strings.ContainsFunc(tf.Prefix, unicode.IsControl) {
 			add("auth.session.tokens[%d] (%s): prefix must not contain control characters such as newlines", i, tf.Name)
@@ -118,14 +150,14 @@ func (s *Spec) Validate() error {
 		if !oneOf(t.Kind, toolKinds) {
 			add("%s: kind %q must be one of %s", where, t.Kind, strings.Join(toolKinds, ", "))
 		}
-		errs = append(errs, t.validateRequest(where)...)
+		errs = append(errs, t.validateRequest(where, tokenPaths)...)
 	}
 	return errors.Join(errs...)
 }
 
 func (r TokenRef) count() int {
 	n := 0
-	for _, v := range []string{r.ResponseJSON, r.ResponseHeader, r.Cookie, r.Header, r.Query, r.Body} {
+	for _, v := range []string{r.ResponseJSON, r.ResponseText, r.ResponseHeader, r.Cookie, r.Header, r.Query, r.Body, r.Path} {
 		if v != "" {
 			n++
 		}
@@ -133,7 +165,9 @@ func (r TokenRef) count() int {
 	return n
 }
 
-func (t *Tool) validateRequest(where string) []error {
+// validateRequest checks a tool's request, inputs and file settings.
+// tokenPaths are the path placeholders that session tokens fill.
+func (t *Tool) validateRequest(where string, tokenPaths map[string]bool) []error {
 	var errs []error
 	add := func(format string, a ...any) {
 		errs = append(errs, fmt.Errorf(where+": "+format, a...))
@@ -177,7 +211,7 @@ func (t *Tool) validateRequest(where string) []error {
 	placeholders := map[string]bool{}
 	for _, p := range Placeholders(r.Path) {
 		placeholders[p] = true
-		if !pathFields[p] {
+		if !pathFields[p] && !tokenPaths[p] {
 			add("request.path placeholder {%s} has no input with in: path and field: %s", p, p)
 		}
 	}
@@ -200,6 +234,9 @@ func (t *Tool) validateRequest(where string) []error {
 		if c := f.Chunked; c != nil {
 			if c.ChunkSize <= 0 {
 				add("file.chunked.chunk_size must be positive")
+			}
+			if c.IndexBase < 0 {
+				add("file.chunked.index_base must be 0 or more")
 			}
 			if c.OffsetField == "" && c.IndexField == "" {
 				add("file.chunked needs offset_field or index_field")

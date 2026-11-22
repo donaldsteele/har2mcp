@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"regexp"
-	"runtime"
 	"strings"
 
 	"github.com/donaldsteele/har2mcp/internal/analyze"
@@ -78,12 +78,13 @@ func analyzeTo(stdout io.Writer, args []string) error {
 	if err := spec.Save(path, result); err != nil {
 		return err
 	}
-	printAnalyzeSummary(stdout, path, result, existing)
+	printAnalyzeSummary(stdout, path, result, existing, startOrigin(hars))
 	return nil
 }
 
-// printAnalyzeSummary reports what was written and what to do next.
-func printAnalyzeSummary(w io.Writer, path string, s *spec.Spec, existing *spec.Spec) {
+// printAnalyzeSummary reports what was written and what to do next. start
+// is the origin of the recorded start URL, or "".
+func printAnalyzeSummary(w io.Writer, path string, s *spec.Spec, existing *spec.Spec, start string) {
 	kinds := map[string]int{}
 	for _, t := range s.Tools {
 		kinds[t.Kind]++
@@ -102,6 +103,10 @@ func printAnalyzeSummary(w io.Writer, path string, s *spec.Spec, existing *spec.
 		tools += " (" + strings.Join(kl, ", ") + ")"
 	}
 	fmt.Fprintf(w, "Wrote %s: %s, auth mode %s.\n", path, tools, s.Auth.Mode)
+	if start != "" && s.Service.BaseURL != "" && !strings.EqualFold(start, s.Service.BaseURL) {
+		fmt.Fprintf(w, "Note: the device's API answered at %s, not at the address you recorded (%s), so the spec and the generated server use %s.\n",
+			s.Service.BaseURL, start, s.Service.BaseURL)
+	}
 
 	if existing != nil {
 		old := map[string]bool{}
@@ -134,17 +139,18 @@ func printAnalyzeSummary(w io.Writer, path string, s *spec.Spec, existing *spec.
 Next:
   har2mcp inspect %[1]s     # summary of tools and auth, safe to share
   har2mcp generate %[1]s --target go
-`, analyzeQuoteArg(path))
+`, quoteArg(path))
 }
 
-// analyzeQuoteArg quotes a path for the shell when it needs it: double
-// quotes on Windows, single quotes elsewhere.
-func analyzeQuoteArg(s string) string {
-	if s != "" && !strings.ContainsAny(s, " \t'\"$&|;<>()*?[]#~`") {
-		return s
+// startOrigin is the scheme://host[:port] of the first recording's start
+// URL, or "".
+func startOrigin(hars []*har.HAR) string {
+	for _, h := range hars {
+		if m := h.Log.Har2mcp; m != nil && m.StartURL != "" {
+			if u, err := url.Parse(m.StartURL); err == nil && u.Host != "" {
+				return u.Scheme + "://" + u.Host
+			}
+		}
 	}
-	if runtime.GOOS == "windows" {
-		return `"` + s + `"`
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return ""
 }

@@ -121,7 +121,11 @@ share you made for the purpose.
 ## Files
 
 - **Uploads:** upload a small file. The recording keeps the form's structure
-  (field names, file name, content type) and the bytes up to the body cap.
+  (field names, file name, content type) and the request's total size, but
+  not the file's bytes: Chrome leaves them out of what it reports. For a
+  chunked upload, upload a file big enough to take several chunks; analysis
+  works out the chunk size from the offsets, the upload protocol's fields or
+  the request sizes.
 - **Downloads:** the recording keeps the headers, size and content type, and
   the body up to the cap.
 - The cap is 2 MiB (2097152 bytes) per request or response body. Change it

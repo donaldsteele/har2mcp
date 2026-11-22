@@ -134,13 +134,7 @@ func sampleSpec() *Spec {
 func stampGenerated(s *Spec) {
 	for i := range s.Tools {
 		t := &s.Tools[i]
-		t.Generated = map[string]string{
-			"name":        FieldHash(t.Name),
-			"description": FieldHash(t.Description),
-			"enabled":     FieldHash(t.Enabled),
-			"kind":        FieldHash(t.Kind),
-			"inputs":      FieldHash(t.Inputs),
-		}
+		t.Generated = GeneratedHashes(t)
 	}
 	s.AuthGenerated = FieldHash(s.Auth)
 }

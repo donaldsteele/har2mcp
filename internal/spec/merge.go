@@ -7,11 +7,16 @@ package spec
 var editableFields = []string{"name", "description", "enabled", "kind", "inputs"}
 
 // GeneratedHashes returns the Tool.Generated map for t: FieldHash of each
-// user-editable field (name, description, enabled, kind, inputs).
+// user-editable field (name, description, enabled, kind, inputs), and of
+// each input on its own under "input:<in>:<field>", so Merge can tell which
+// inputs were edited.
 func GeneratedHashes(t *Tool) map[string]string {
-	m := make(map[string]string, len(editableFields))
+	m := make(map[string]string, len(editableFields)+len(t.Inputs))
 	for _, f := range editableFields {
 		m[f] = FieldHash(fieldValue(t, f))
+	}
+	for _, in := range t.Inputs {
+		m[inputHashPrefix+inputKey(in)] = FieldHash(in)
 	}
 	return m
 }
@@ -43,10 +48,11 @@ func edited(t *Tool, field string) bool {
 // Merge combines an existing spec (possibly hand-edited) with a freshly
 // analyzed one and returns the result. Neither argument is modified.
 //
-//   - Tools are matched on Source.Key. For name, description, enabled, kind
-//     and inputs, a field edited by hand is kept; otherwise the fresh value is
-//     taken. Request, response, source, file and review flags come from the
-//     fresh tool, and Generated is recomputed from the fresh values.
+//   - Tools are matched on Source.Key. For name, description, enabled and
+//     kind, a field edited by hand is kept; otherwise the fresh value is
+//     taken. Inputs merge one by one, keyed on where each goes (see
+//     mergeInputs). Request, response, source, file and review flags come
+//     from the fresh tool, and Generated is recomputed from the fresh values.
 //   - Tools only in the existing spec are kept; tools only in the fresh spec
 //     are appended. Existing tools keep their order.
 //   - Names stay unique: a name the user chose wins, and a colliding name
@@ -119,9 +125,7 @@ func Merge(existing, fresh *Spec) *Spec {
 		if edited(old, "kind") {
 			m.Kind = old.Kind
 		}
-		if edited(old, "inputs") {
-			m.Inputs = append([]Input(nil), old.Inputs...)
-		}
+		mergeInputs(old, nt, &m)
 		m.Generated = GeneratedHashes(nt)
 		out.Tools = append(out.Tools, m)
 		pinned = append(pinned, edited(old, "name"))

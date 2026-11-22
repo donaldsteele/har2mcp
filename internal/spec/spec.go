@@ -38,8 +38,13 @@ type Service struct {
 }
 
 // Auth describes how the generated server logs in and keeps its session.
+//
+// Mode is "none" (no login), "http" (replay the login request), "browser"
+// (log in through headless Chrome) or "basic" (HTTP Basic auth: every
+// request carries the username and password, and there is no login
+// request).
 type Auth struct {
-	Mode                string   `yaml:"mode"` // "none" | "http" | "browser"
+	Mode                string   `yaml:"mode"` // "none" | "http" | "browser" | "basic"
 	Login               *Login   `yaml:"login,omitempty"`
 	Session             Session  `yaml:"session,omitempty"`
 	ReloginOn           []int    `yaml:"relogin_on,omitempty"`
@@ -74,23 +79,40 @@ type Session struct {
 // TokenFlow says where a token is read from and where it is sent. Prefix
 // is sent in front of the token, such as "Bearer " for an Authorization
 // header.
+//
+// The token is read from the login response unless Request is set. Request
+// is a request whose response carries the token, such as GET /api/session;
+// the generated server sends it after logging in (or before the first call
+// when there is no login) and reads the token from its response.
 type TokenFlow struct {
-	Name   string   `yaml:"name"`
-	From   TokenRef `yaml:"from"`
-	To     TokenRef `yaml:"to"`
-	Prefix string   `yaml:"prefix,omitempty"`
+	Name    string   `yaml:"name"`
+	From    TokenRef `yaml:"from"`
+	To      TokenRef `yaml:"to"`
+	Prefix  string   `yaml:"prefix,omitempty"`
+	Request *Request `yaml:"request,omitempty"`
 }
 
-// TokenRef is one place a token lives. Exactly one field is set:
-// ResponseJSON is a dotted path into a JSON response body; the others name
-// a response header, cookie, request header, query key or dotted body path.
+// TokenRef is one place a token lives. Exactly one field is set.
+//
+// As a source (TokenFlow.From): ResponseJSON is a dotted path into a JSON
+// response body; ResponseText is a regular expression whose first group
+// finds the token in a text, XML or HTML response (such as
+// "<SID>([0-9a-f]+)</SID>"); ResponseHeader names a response header and
+// Cookie a cookie.
+//
+// As a target (TokenFlow.To): Header, Query, Body and Cookie name a request
+// header, query key, dotted body path or cookie; Path names a {placeholder}
+// in tool paths that the server fills with the token, for devices that put
+// the session in the URL ("/cgi-bin/luci/;stok={stok}/admin").
 type TokenRef struct {
 	ResponseJSON   string `yaml:"response_json,omitempty"`
+	ResponseText   string `yaml:"response_text,omitempty"`
 	ResponseHeader string `yaml:"response_header,omitempty"`
 	Cookie         string `yaml:"cookie,omitempty"`
 	Header         string `yaml:"header,omitempty"`
 	Query          string `yaml:"query,omitempty"`
 	Body           string `yaml:"body,omitempty"`
+	Path           string `yaml:"path,omitempty"`
 }
 
 // Tool is one MCP tool: one operation on the device.
@@ -144,12 +166,15 @@ type FileOp struct {
 	Chunked   *Chunking `yaml:"chunked,omitempty"`
 }
 
-// Chunking describes a chunked or resumable upload.
+// Chunking describes a chunked or resumable upload. IndexBase is the index
+// of the first chunk: 0, or 1 for protocols such as resumable.js and
+// flow.js that count from 1.
 type Chunking struct {
 	OffsetField string `yaml:"offset_field,omitempty"`
 	TotalField  string `yaml:"total_field,omitempty"`
 	IndexField  string `yaml:"index_field,omitempty"`
 	ChunkSize   int64  `yaml:"chunk_size,omitempty"`
+	IndexBase   int64  `yaml:"index_base,omitempty"`
 }
 
 // Response describes what a tool's request returns.

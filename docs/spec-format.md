@@ -264,8 +264,8 @@ If you change it, update the environment variables in your MCP client too.
 
 | Key | Meaning |
 |---|---|
-| `mode` | `none`, `http` or `browser`. See below. |
-| `login` | Required unless `mode` is `none`. |
+| `mode` | `none`, `http`, `browser` or `basic`. See below. |
+| `login` | Required in `http` and `browser` mode. |
 | `login.page_url` | The page with the login form. |
 | `login.request` | The login request, in the same shape as a tool's [request](#request). `{{username}}` and `{{password}}` mark where the username and password go. |
 | `login.form` | CSS selectors for the login form: `username`, `password` and `submit`. Required in `browser` mode. |
@@ -276,7 +276,7 @@ If you change it, update the environment variables in your MCP client too.
 | `review` | `true` when analysis isn't sure about the login. |
 | `review_notes` | Why, one line per problem. |
 
-The three modes:
+The four modes:
 
 - **`none`:** the device needs no login.
 - **`http`:** the password appeared in the login request exactly as you
@@ -288,14 +288,33 @@ The three modes:
   from the server, for example). The generated server opens the login page
   in headless Chrome, fills in `login.form`, waits for the session cookie and
   copies the cookies into its HTTP client. Chrome must be installed where the
-  server runs.
+  server runs. When `login.form.submit` is empty (you pressed Enter, or the
+  recorder could not tie the button you clicked to the form), the server
+  presses Enter in the password field instead.
+- **`basic`:** the device uses HTTP Basic authentication: the browser showed
+  its own sign-in box, and every request carried an `Authorization: Basic`
+  header. There is no login request. The generated server sends `<P>_USER`
+  and `<P>_PASSWORD` with every request. HTTP Digest authentication is not
+  supported; analysis sets `mode: none` with a review note when it sees it.
 
 A plain HAR exported from developer tools has no typed values to compare
-against, so analysis sets `review: true` and explains what it guessed.
+against, so analysis sets `review: true` and explains what it guessed. It
+only takes a request as the login when it carries one password field and
+something marks it as a login: a login-like path or action, or a response
+that sets a cookie or returns a token. A password change or "add user"
+request stays a tool.
 
 The generated server logs in on its first call. When a response has a status
 in `relogin_on`, or a body containing `relogin_body_contains`, it logs in
-again and retries the call once.
+again and retries the call once, unless it logged in for that same call.
+After a failed login it waits before trying again (15 minutes when the
+device rejected the credentials, 30 seconds after a network error), so a
+wrong password can't trip the device's brute-force lockout.
+
+When the password is short or a common word, such as `admin` or `1234`, the
+same text often appears in the device's paths and values (`/admin/login`).
+Analysis then removes it only where a whole value equals it, and adds a
+review note asking you to check the spec before you share it.
 
 ### tokens
 
@@ -309,16 +328,24 @@ tokens:
 ```
 
 `from` says where the value is read and `to` says where it is sent on later
-requests. Each sets exactly one of these keys:
+requests. Each sets exactly one key. `from` takes one of:
 
 | Key | Meaning |
 |---|---|
 | `response_json` | A dotted path into a JSON response body, such as `data.token` |
+| `response_text` | A regular expression for a text, XML or HTML response; its first group is the token, such as `<SID>([0-9a-f]+)</SID>` or `name="csrf-token" content="([A-Za-z0-9_-]+)` |
 | `response_header` | A response header |
 | `cookie` | A cookie |
+
+`to` takes one of:
+
+| Key | Meaning |
+|---|---|
 | `header` | A request header |
 | `query` | A query string key |
 | `body` | A dotted path into the request body |
+| `cookie` | A cookie |
+| `path` | A `{placeholder}` in tool paths, for devices that put the session in the URL |
 
 An optional `prefix` is sent in front of the value. Bearer tokens use it:
 
@@ -331,7 +358,43 @@ An optional `prefix` is sent in front of the value. Bearer tokens use it:
     prefix: "Bearer "
 ```
 
-Tokens are handled by the server and are never tool inputs.
+The token is read from the login response, unless the flow has a `request`:
+the request whose response carries it, in the same shape as a tool's
+[request](#request). The generated server sends that request right after it
+logs in (or before the first call when there is no login), and again after
+each new login:
+
+```yaml
+  - name: x_csrf_token
+    from:
+      response_json: csrfToken
+    to:
+      header: X-CSRF-Token
+    request:
+      method: GET
+      path: /api/session
+```
+
+Some routers put the session token in the URL path, such as OpenWrt LuCI's
+`/cgi-bin/luci/;stok=<token>/admin/status`. Analysis replaces the token in
+tool paths with a placeholder and adds a flow that fills it:
+
+```yaml
+  - name: stok
+    from:
+      response_json: stok
+    to:
+      path: stok
+# and in a tool:
+    request:
+      method: GET
+      path: /cgi-bin/luci/;stok={stok}/admin/status
+```
+
+Tokens are handled by the server and are never tool inputs. A field that
+looks like a session token (`sid`, `csrf_token`, ...) but whose source
+analysis could not find is left out of the request, with a review note, so
+Claude is never asked to make one up.
 
 ## tools
 
@@ -371,6 +434,16 @@ client. They never block a call, and they never switch a tool off.
 
 When a tool is called, its inputs are merged into the fixed `query` and
 `body` values.
+
+A fixed query value can be one of these placeholders, which the generated
+server fills in on every call. Analysis uses them for the cache-busting
+parameters that jQuery (`_`), ExtJS (`_dc`) and others add:
+
+| Placeholder | Value |
+|---|---|
+| `{{now_ms}}` | The current time in milliseconds since 1970 |
+| `{{now_s}}` | The current time in seconds since 1970 |
+| `{{random}}` | A random number between 0 and 1 |
 
 ### inputs
 
@@ -434,10 +507,15 @@ contents.
 |---|---|
 | `offset_field` | The field that carries each chunk's byte offset |
 | `index_field` | The field that carries each chunk's number |
+| `index_base` | The first chunk's number: `0` (the default) or `1`, as resumable.js and flow.js count |
 | `total_field` | The field that carries the total size |
 | `chunk_size` | Bytes per chunk. Must be positive. |
 
 It needs `chunk_size` and at least one of `offset_field` and `index_field`.
+The recording has no file bytes (Chrome leaves them out), so analysis takes
+the chunk size from the offsets, from a chunk-size field of the upload
+protocol (such as `resumableChunkSize` or `dzchunksize`), or from the size of
+each request.
 When analysis sees chunk-like requests it can't explain, it doesn't guess: it
 sets `review: true` with a note.
 
@@ -488,9 +566,13 @@ When the output spec already exists, `har2mcp analyze` merges the new
 analysis into it:
 
 - Tools are matched on `source.key`.
-- For `name`, `description`, `enabled`, `kind` and `inputs`, a value you
-  changed by hand is kept, and an unchanged one takes the new value.
-  `inputs` counts as one field: change any input and the whole list is kept.
+- For `name`, `description`, `enabled` and `kind`, a value you changed by
+  hand is kept, and an unchanged one takes the new value.
+- Inputs merge one by one, matched on `in` and `field`. An input you edited
+  is kept as you left it, an unchanged one takes the new value, an input
+  the new analysis adds is added, and one you added is kept. An input you
+  deleted stays deleted: its field is sent as a fixed value again, and the
+  tool gets `review: true`.
 - `request`, `response`, `source`, `file` and the review flags always come
   from the new analysis.
 - The `auth` block works the same way, as one unit.
@@ -519,13 +601,15 @@ error names the tool and field to fix.
 anything, refuse one that breaks these rules, and list every problem:
 
 - `service.name` matches `^[a-z][a-z0-9_]{0,31}$`.
-- `auth.mode` is `none`, `http` or `browser`. `http` and `browser` need
-  `auth.login`. `browser` needs `auth.login.form` with the username and
+- `auth.mode` is `none`, `http`, `browser` or `basic`. `http` and `browser`
+  need `auth.login`. `browser` needs `auth.login.form` with the username and
   password selectors.
 - In `http` mode the login request has an upper-case method and a path
   starting with `/`.
 - Every token sets exactly one key in `from` and exactly one in `to`, and
-  its `prefix` has no control characters such as newlines.
+  its `prefix` has no control characters such as newlines. `response_text`
+  is a valid regular expression with a group; `path` is only used in `to`.
+  A token's `request` has an upper-case method and a path starting with `/`.
 - `relogin_on` holds HTTP status codes (100 to 599).
 - Tool names match `^[a-z][a-z0-9_]{0,63}$` and are unique.
 - `kind` is `read`, `change` or `destructive`.
@@ -533,7 +617,7 @@ anything, refuse one that breaks these rules, and list every problem:
   `body_type` is `none`, `json`, `form` or `multipart`.
 - Input names match `^[A-Za-z][A-Za-z0-9_]{0,63}$` and are unique in their
   tool. `type` and `in` are from their lists.
-- Every `{placeholder}` in a path has an `in: path` input, and every
-  `in: path` input has a placeholder.
+- Every `{placeholder}` in a path has an `in: path` input or a token with
+  `to: {path: ...}`, and every `in: path` input has a placeholder.
 - A tool with `file` has exactly one `in: file` input, and only tools with
   `file` may have one. Uploads need `file.part`.

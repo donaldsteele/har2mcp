@@ -85,8 +85,19 @@ again when the session expires.
 
 **Chrome, Chromium or Edge must be installed on the machine that runs this
 server.** Set `{{.EnvPrefix}}_BROWSER` if it is not in a standard location.
+{{- else if eq .Mode "basic" -}}
+The device uses HTTP Basic authentication: the server sends your user name
+and password with every request. There is no login request and no session
+to keep.
 {{- else -}}
 The recording had no login, so the server sends requests without one.
+{{- end}}
+{{- if or (eq .Mode "http") (eq .Mode "browser")}}
+
+After a failed login the server waits 15 minutes before it tries again (30
+seconds after a network error), so a wrong password can't trip the device's
+lockout, which on many devices also locks you out of the web page. Fix the
+password and restart the server.
 {{- end}}
 
 ## Tools

@@ -98,7 +98,8 @@ func (c *Client) runTool(ctx context.Context, op *operation, args map[string]any
 
 // prepare applies the arguments to the operation: path placeholders, query
 // parameters and body fields. It returns the local path argument of file
-// tools separately.
+// tools separately. Path placeholders for session tokens stay for
+// newHTTPRequest to fill.
 func prepare(op *operation, args map[string]any) (*request, string, error) {
 	r := newRequest(op)
 	localPath := ""
@@ -122,8 +123,11 @@ func prepare(op *operation, args map[string]any) (*request, string, error) {
 			localPath = scalarString(v)
 		}
 	}
-	if m := placeholderRE.FindString(r.path); m != "" {
-		return nil, "", fmt.Errorf("no value for %s in the request path %s", m, op.Path)
+	for _, m := range placeholderRE.FindAllString(r.path, -1) {
+		// Session-token placeholders are filled when the request is sent.
+		if !isTokenPlaceholder(m) {
+			return nil, "", fmt.Errorf("no value for %s in the request path %s", m, op.Path)
+		}
 	}
 	return r, localPath, nil
 }

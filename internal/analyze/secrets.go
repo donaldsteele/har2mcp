@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/donaldsteele/har2mcp/internal/har"
 	"github.com/donaldsteele/har2mcp/internal/spec"
@@ -15,21 +14,32 @@ import (
 // cookie values, tokens and the values of secret-named fields. Before the
 // spec is returned, each of these is replaced with har.Redacted wherever it
 // appears in a spec value.
+//
+// A password that is short or a common word ("admin", "1234") is weak: the
+// same text is often an ordinary word in the device's paths and values
+// ("/admin/login", "role: admin"), so it is only replaced where a whole
+// value that could hold it equals it, never inside other text.
 type secretSet struct {
-	set map[string]bool
+	set  map[string]bool // replaced wherever they appear
+	weak map[string]bool // replaced only as whole values
 }
 
-func newSecretSet() *secretSet { return &secretSet{set: map[string]bool{}} }
+func newSecretSet() *secretSet { return &secretSet{set: map[string]bool{}, weak: map[string]bool{}} }
 
-// add records v. always is for values known to be secret (passwords);
-// other values are only kept when they are distinctive enough to scrub
-// without mangling ordinary text.
+// add records v. always is for values known to be secret (passwords): they
+// are replaced everywhere when distinctive (har.Distinctive), else only as
+// whole values. Other values are kept when they are distinctive enough to
+// scrub without mangling ordinary text (looksSecret).
 func (s *secretSet) add(v string, always bool) {
 	v = strings.TrimSpace(v)
 	if v == "" || v == har.Redacted || isPlaceholder(v) {
 		return
 	}
-	if !always && !looksSecret(v) {
+	switch {
+	case always && !har.Distinctive(v):
+		s.weak[v] = true
+		return
+	case !always && !looksSecret(v):
 		return
 	}
 	s.set[v] = true
@@ -43,12 +53,7 @@ func (s *secretSet) add(v string, always bool) {
 // looksSecret reports whether a value found in a secret place is distinctive
 // enough to scrub everywhere: at least 6 characters with a digit, or at
 // least 12 characters.
-func looksSecret(v string) bool {
-	if len(v) < 6 {
-		return false
-	}
-	return len(v) >= 12 || strings.IndexFunc(v, unicode.IsDigit) >= 0
-}
+func looksSecret(v string) bool { return har.LooksSecret(v) }
 
 func isPlaceholder(v string) bool { return v == "{{password}}" || v == "{{username}}" }
 
@@ -78,19 +83,32 @@ func (s *secretSet) scrub(v string, list []string) string {
 	return v
 }
 
+// value scrubs one whole value that could hold a password: a weak password
+// it equals is replaced too.
+func (s *secretSet) value(v string, list []string) string {
+	if s.weak[strings.TrimSpace(v)] {
+		return har.Redacted
+	}
+	return s.scrub(v, list)
+}
+
 // scrubAny returns v with secrets replaced in every string it contains.
-func (s *secretSet) scrubAny(v any, list []string) any {
+// With whole set, strings that equal a weak password are replaced too.
+func (s *secretSet) scrubAny(v any, list []string, whole bool) any {
 	switch x := v.(type) {
 	case string:
+		if whole {
+			return s.value(x, list)
+		}
 		return s.scrub(x, list)
 	case map[string]any:
 		for k, val := range x {
-			x[k] = s.scrubAny(val, list)
+			x[k] = s.scrubAny(val, list, whole)
 		}
 		return x
 	case []any:
 		for i := range x {
-			x[i] = s.scrubAny(x[i], list)
+			x[i] = s.scrubAny(x[i], list, whole)
 		}
 		return x
 	default:
@@ -98,15 +116,24 @@ func (s *secretSet) scrubAny(v any, list []string) any {
 	}
 }
 
+// scrubFields scrubs fixed request values. A value under a secret-named
+// field is a whole value that could hold a password; elsewhere a weak
+// password is an ordinary word ("group: admin") and is kept.
+func (s *secretSet) scrubFields(m map[string]any, list []string) {
+	for k, v := range m {
+		if sub, ok := v.(map[string]any); ok {
+			s.scrubFields(sub, list)
+			continue
+		}
+		m[k] = s.scrubAny(v, list, isSecretField(k))
+	}
+}
+
 func (s *secretSet) scrubRequest(r *spec.Request, list []string) {
-	for k, v := range r.Query {
-		r.Query[k] = s.scrubAny(v, list)
-	}
-	for k, v := range r.Body {
-		r.Body[k] = s.scrubAny(v, list)
-	}
+	s.scrubFields(r.Query, list)
+	s.scrubFields(r.Body, list)
 	for k, v := range r.Headers {
-		r.Headers[k] = s.scrub(v, list)
+		r.Headers[k] = s.value(v, list)
 	}
 	r.Path = s.scrub(r.Path, list)
 }
@@ -124,6 +151,11 @@ func (s *secretSet) scrubSpec(sp *spec.Spec) {
 		a.Login.PageURL = s.scrub(a.Login.PageURL, list)
 		s.scrubRequest(&a.Login.Request, list)
 	}
+	for i := range a.Session.Tokens {
+		if r := a.Session.Tokens[i].Request; r != nil {
+			s.scrubRequest(r, list)
+		}
+	}
 	for i := range a.ReviewNotes {
 		a.ReviewNotes[i] = s.scrub(a.ReviewNotes[i], list)
 	}
@@ -135,64 +167,80 @@ func (s *secretSet) scrubSpec(sp *spec.Spec) {
 			in := &t.Inputs[j]
 			in.Description = s.scrub(in.Description, list)
 			if in.Example != nil {
-				in.Example = s.scrubAny(in.Example, list)
+				in.Example = s.scrubAny(in.Example, list, true)
 				if in.Example == har.Redacted {
 					in.Example = nil
 				}
 			}
 		}
-		t.Response.Example = s.scrubAny(t.Response.Example, list)
+		t.Response.Example = s.scrubAny(t.Response.Example, list, true)
 		for j := range t.ReviewNotes {
 			t.ReviewNotes[j] = s.scrub(t.ReviewNotes[j], list)
 		}
+		t.Source.Key = s.scrub(t.Source.Key, list)
 		t.Source.Trigger = s.scrub(t.Source.Trigger, list)
 		for j := range t.Source.Steps {
 			t.Source.Steps[j] = s.scrub(t.Source.Steps[j], list)
 		}
 	}
+	if s.weakLeft(sp) {
+		a.Review = true
+		a.ReviewNotes = append(a.ReviewNotes, "The password is short or a common word, and the same text also appears elsewhere in the spec (in a path or a value, for example), so har2mcp only removed it where a whole value matched. Check the spec by hand before you share it.")
+	}
 }
 
-var (
-	secretHeaderWords = []string{"token", "csrf", "xsrf", "session", "auth", "secret", "password", "api-key", "apikey", "api_key", "cookie"}
-	secretFieldExact  = map[string]bool{"password": true, "passwd": true, "pwd": true, "pass": true, "token": true, "csrf": true, "sid": true, "secret": true, "pin": true, "psk": true, "otp": true}
-	secretFieldWords  = []string{"password", "passwd", "passphrase", "token", "csrf", "xsrf", "secret", "sessid", "sessionid", "session_id", "apikey", "api_key", "access_key", "private_key", "psk", "wpa_key", "wpakey", "wifi_key", "wifikey"}
-)
+// weakLeft reports whether a weak password still appears anywhere in the
+// spec, as part of other text.
+func (s *secretSet) weakLeft(sp *spec.Spec) bool {
+	if len(s.weak) == 0 {
+		return false
+	}
+	b, err := json.Marshal(sp)
+	if err != nil {
+		return true
+	}
+	all := string(b)
+	for w := range s.weak {
+		enc, _ := json.Marshal(w)
+		if strings.Contains(all, w) || strings.Contains(all, string(enc[1:len(enc)-1])) {
+			return true
+		}
+	}
+	return false
+}
 
 // isSecretHeader reports whether a header name suggests its value is a
-// credential.
-func isSecretHeader(name string) bool {
-	n := strings.ToLower(name)
-	for _, w := range secretHeaderWords {
-		if strings.Contains(n, w) {
-			return true
-		}
-	}
-	return false
-}
+// credential (har.IsSecretHeader).
+func isSecretHeader(name string) bool { return har.IsSecretHeader(name) }
 
 // isSecretField reports whether a body, form or query field name suggests a
-// credential. For dotted paths only the last part counts.
-func isSecretField(name string) bool {
+// credential (har.IsSecretField). For dotted paths only the last part
+// counts.
+func isSecretField(name string) bool { return har.IsSecretField(name) }
+
+// isPasswordField reports whether a field name is a password field.
+func isPasswordField(name string) bool { return har.IsPasswordField(name) }
+
+// sessionTokenWords are field-name parts that mark a session or CSRF token,
+// as opposed to a credential the user chooses (a password or Wi-Fi key).
+var sessionTokenWords = []string{"token", "csrf", "xsrf", "sessid", "session", "stok", "nonce"}
+
+// isSessionTokenField reports whether a field name suggests a session or
+// CSRF token: sid, stok, or a name with token, csrf or session in it.
+func isSessionTokenField(name string) bool {
 	n := strings.ToLower(lastSegment(name))
-	if secretFieldExact[n] {
+	if n == "sid" || n == "stok" || n == "auth" {
 		return true
 	}
-	for _, w := range secretFieldWords {
+	if isPasswordField(n) {
+		return false
+	}
+	for _, w := range sessionTokenWords {
 		if strings.Contains(n, w) {
 			return true
 		}
 	}
 	return false
-}
-
-// isPasswordField reports whether a field name is a password field.
-func isPasswordField(name string) bool {
-	n := strings.ToLower(lastSegment(name))
-	switch n {
-	case "password", "passwd", "pwd", "pass", "passphrase", "pass_word", "pw":
-		return true
-	}
-	return strings.Contains(n, "password") || strings.Contains(n, "passwd")
 }
 
 // collectSecrets gathers passwords, cookie values, secret header values and
@@ -208,7 +256,7 @@ func (rec *recording) collectSecrets() {
 		}
 	}
 	for _, tv := range rec.typed {
-		if strings.EqualFold(tv.input.Type, "password") {
+		if har.IsSecretInput(tv.input) {
 			s.add(tv.input.Value, true)
 		}
 	}
