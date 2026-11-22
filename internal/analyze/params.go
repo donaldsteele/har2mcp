@@ -55,6 +55,11 @@ func parseRequest(e *har.Entry, u *url.URL) parsedRequest {
 	}
 
 	pd := e.Request.PostData
+	if pd != nil && pd.Truncated && pd.Text == "" && len(pd.Params) == 0 {
+		p.bodyType = "other"
+		p.problem = "the request body was over the recording cap, so its fields are unknown (record again with a bigger --body-cap)"
+		return p
+	}
 	if pd == nil || (pd.Text == "" && len(pd.Params) == 0) {
 		return p
 	}

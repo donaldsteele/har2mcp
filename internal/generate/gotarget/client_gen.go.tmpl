@@ -108,10 +108,12 @@ type tokenRef struct {
 }
 
 // tokenFlow is a session token: where it comes from and where it goes.
+// Prefix is sent in front of it, such as "Bearer ".
 type tokenFlow struct {
-	Name string
-	From tokenRef
-	To   tokenRef
+	Name   string
+	From   tokenRef
+	To     tokenRef
+	Prefix string
 }
 
 // Client sends requests to the device. It logs in on first use, adds the
@@ -191,8 +193,9 @@ func envBool(name string) bool {
 // origin is the device's scheme://host[:port].
 func (c *Client) origin() string { return c.base.Scheme + "://" + c.base.Host }
 
-// rebase moves a recorded absolute URL onto the configured device address,
-// keeping its path and query.
+// rebase moves a recorded URL, absolute or relative, onto the configured
+// device address, keeping its path, query and fragment. The fragment
+// matters for hash-routed apps whose login page is at "/#/login".
 func (c *Client) rebase(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || raw == "" {
@@ -204,6 +207,9 @@ func (c *Client) rebase(raw string) string {
 	}
 	if u.RawQuery != "" {
 		p += "?" + u.RawQuery
+	}
+	if u.Fragment != "" {
+		p += "#" + u.EscapedFragment()
 	}
 	return c.origin() + p
 }
@@ -562,6 +568,7 @@ func (c *Client) newHTTPRequest(ctx context.Context, r *request) (*http.Request,
 		if v == "" {
 			continue
 		}
+		v = tf.Prefix + v
 		switch {
 		case tf.To.Header != "":
 			tokenHeaders[tf.To.Header] = v

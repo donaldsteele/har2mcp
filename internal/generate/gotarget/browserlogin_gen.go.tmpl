@@ -123,6 +123,11 @@ func (c *Client) browserLogin(ctx context.Context) error {
 		chromedp.SendKeys(chromedp.CSS(loginPasswordSelector), c.password),
 		submit,
 	); err != nil {
+		if tabCtx.Err() != nil && allocCtx.Err() == nil {
+			// Chrome runs, but the form never appeared or could not be used.
+			return fmt.Errorf("browser login: the login form at %s did not appear or could not be filled in within %s; check %s_URL, and auth.login.page_url and auth.login.form in the spec",
+				page, browserLoginTimeout, envPrefix)
+		}
 		return browserError(fmt.Errorf("filling in the login form at %s: %w", page, err))
 	}
 

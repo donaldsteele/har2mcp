@@ -644,7 +644,11 @@ func tokensLit(flows []spec.TokenFlow) string {
 	var b strings.Builder
 	b.WriteString("[]tokenFlow{\n")
 	for _, tf := range flows {
-		fmt.Fprintf(&b, "{Name: %s, From: %s, To: %s},\n", strconv.Quote(tf.Name), tokenRefLit(tf.From), tokenRefLit(tf.To))
+		fmt.Fprintf(&b, "{Name: %s, From: %s, To: %s", strconv.Quote(tf.Name), tokenRefLit(tf.From), tokenRefLit(tf.To))
+		if tf.Prefix != "" {
+			fmt.Fprintf(&b, ", Prefix: %s", strconv.Quote(tf.Prefix))
+		}
+		b.WriteString("},\n")
 	}
 	b.WriteString("}")
 	return b.String()

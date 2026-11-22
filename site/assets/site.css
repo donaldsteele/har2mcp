@@ -281,7 +281,7 @@ h3.minor{font-size:15px;margin:0 0 12px;letter-spacing:.01em}
 .claude-band{position:relative}
 .claude-band::before{content:"";position:absolute;inset:40px 0 auto;height:500px;pointer-events:none;background:radial-gradient(ellipse 45% 50% at 80% 30%,color-mix(in srgb,var(--info) 14%,transparent),transparent 70%)}
 .claude-band .wrap{position:relative}
-.envs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:40px 0 0;padding:0;list-style:none}
+.envs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:40px 0 0;padding:0;list-style:none}
 .envs li{border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:12px 14px;color:var(--dim);font-size:13.5px;min-width:0}
 .envs b{display:block;font:700 14px var(--mono);color:var(--fg);overflow-wrap:anywhere}
 @media (max-width:1000px){.envs{grid-template-columns:repeat(2,minmax(0,1fr))}}

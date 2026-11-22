@@ -291,7 +291,11 @@ func printAuth(w io.Writer, a *spec.Auth) {
 		fmt.Fprintf(tw, "  cookies:\t%s\n", strings.Join(a.Session.Cookies, ", "))
 	}
 	for _, tf := range a.Session.Tokens {
-		fmt.Fprintf(tw, "  token:\t%s: %s -> %s\n", tf.Name, tokenRef(tf.From), tokenRef(tf.To))
+		to := tokenRef(tf.To)
+		if tf.Prefix != "" {
+			to += fmt.Sprintf(", prefixed %q", tf.Prefix)
+		}
+		fmt.Fprintf(tw, "  token:\t%s: %s -> %s\n", tf.Name, tokenRef(tf.From), to)
 	}
 	if len(a.ReloginOn) > 0 || a.ReloginBodyContains != "" {
 		var codes []string

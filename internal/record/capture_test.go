@@ -310,10 +310,10 @@ func TestCapturePostDataOmitted(t *testing.T) {
 		up, raw = raw, up
 	}
 	want := []har.Param{{Name: "path", Value: "/public"}, {Name: "file", FileName: "big.iso", ContentType: "application/x-iso9660-image"}}
-	if up.PostData == nil || !reflect.DeepEqual(up.PostData.Params, want) || up.BodySize != 5000 || up.PostData.Text != "" {
+	if up.PostData == nil || !reflect.DeepEqual(up.PostData.Params, want) || up.BodySize != 5000 || up.PostData.Text != "" || !up.PostData.Truncated {
 		t.Errorf("upload post data = %+v size %d", up.PostData, up.BodySize)
 	}
-	if raw.PostData == nil || raw.PostData.Text != "" || raw.BodySize != 4194304 || raw.PostData.MimeType != "application/octet-stream" {
+	if raw.PostData == nil || raw.PostData.Text != "" || raw.BodySize != 4194304 || raw.PostData.MimeType != "application/octet-stream" || !raw.PostData.Truncated {
 		t.Errorf("raw post data = %+v size %d", raw.PostData, raw.BodySize)
 	}
 }

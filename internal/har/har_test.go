@@ -92,6 +92,15 @@ func sampleHAR() *HAR {
 				Step:    "list disks",
 				Trigger: &Trigger{Text: "Disks", AriaLabel: "Show disks", Role: "button", Selector: "#btn-disks"},
 			},
+			{
+				StartedDateTime: t0.Add(3 * time.Second),
+				Request: Request{
+					Method: "PUT", URL: "http://nas.local/api/chunk", HTTPVersion: "HTTP/1.1",
+					PostData: &PostData{MimeType: "application/octet-stream", Truncated: true},
+					BodySize: 4194304,
+				},
+				Response: Response{Status: 200},
+			},
 		},
 		Har2mcp: &Meta{
 			Version:  "test",
@@ -139,6 +148,9 @@ func TestRoundTripPreservesExtensions(t *testing.T) {
 	}
 	if !h.Log.Entries[1].Response.Content.Truncated {
 		t.Fatal("_truncated not preserved")
+	}
+	if pd := h.Log.Entries[2].Request.PostData; pd == nil || !pd.Truncated {
+		t.Fatalf("request _truncated not preserved: %+v", pd)
 	}
 	if got := h.Log.Har2mcp.Login.PasswordSelector; got != "#password" {
 		t.Fatalf("login selector = %q", got)

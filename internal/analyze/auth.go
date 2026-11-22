@@ -620,11 +620,8 @@ func detectTokens(rec *recording, cands []*sample, login map[*sample]bool) token
 			to.Body = c.name
 		}
 		name := spec.UniqueName(spec.SanitizeName(c.name, 60), taken)
-		res.flows = append(res.flows, spec.TokenFlow{Name: name, From: ref, To: to})
+		res.flows = append(res.flows, spec.TokenFlow{Name: name, From: ref, To: to, Prefix: c.prefix})
 		res.carriers = append(res.carriers, k)
-		if c.prefix != "" {
-			res.notes = append(res.notes, fmt.Sprintf("The %s header sends the token after %q; check that the generated server adds that prefix.", c.name, strings.TrimSpace(c.prefix)))
-		}
 	}
 	var unknown []string
 	for ln, name := range secretHeaders {

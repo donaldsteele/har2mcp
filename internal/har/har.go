@@ -82,10 +82,13 @@ type Request struct {
 }
 
 // PostData is a request body. Multipart bodies list their parts in Params.
+// Truncated is set when the recorder dropped the text above its size cap;
+// Params may still list the fields and parts.
 type PostData struct {
-	MimeType string  `json:"mimeType"`
-	Text     string  `json:"text"`
-	Params   []Param `json:"params,omitempty"`
+	MimeType  string  `json:"mimeType"`
+	Text      string  `json:"text"`
+	Params    []Param `json:"params,omitempty"`
+	Truncated bool    `json:"_truncated,omitempty"`
 }
 
 // Param is one posted parameter or multipart part.

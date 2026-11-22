@@ -71,11 +71,14 @@ type Session struct {
 	Tokens  []TokenFlow `yaml:"tokens,omitempty"`
 }
 
-// TokenFlow says where a token is read from and where it is sent.
+// TokenFlow says where a token is read from and where it is sent. Prefix
+// is sent in front of the token, such as "Bearer " for an Authorization
+// header.
 type TokenFlow struct {
-	Name string   `yaml:"name"`
-	From TokenRef `yaml:"from"`
-	To   TokenRef `yaml:"to"`
+	Name   string   `yaml:"name"`
+	From   TokenRef `yaml:"from"`
+	To     TokenRef `yaml:"to"`
+	Prefix string   `yaml:"prefix,omitempty"`
 }
 
 // TokenRef is one place a token lives. Exactly one field is set:

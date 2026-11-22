@@ -24,7 +24,8 @@ spec, and generate a Go MCP server from it.
   exported from browser developer tools, into a spec:
   - finds the login and whether the password is sent as typed (`http` mode)
     or scrambled in the page (`browser` mode);
-  - finds session cookies, CSRF and header tokens, and when to log in again;
+  - finds session cookies, CSRF and header tokens (including `Bearer`
+    access tokens), and when to log in again;
   - groups requests into operations, with path parameters and one operation
     per action value on RPC-style endpoints (`act`, `action`, `method`,
     GraphQL `operationName`, and similar);

@@ -115,6 +115,8 @@ func TestInspectSpecRedactedSummary(t *testing.T) {
 	s.Auth.Login.Request.Body["password"] = password
 	s.Tools[0].Request.Headers = map[string]string{"X-Debug": password}
 	s.Tools[0].Description = "uses " + password
+	s.Auth.Session.Tokens = append(s.Auth.Session.Tokens, spec.TokenFlow{Name: "authorization",
+		From: spec.TokenRef{ResponseJSON: "data.token"}, To: spec.TokenRef{Header: "Authorization"}, Prefix: "Bearer "})
 
 	var buf bytes.Buffer
 	if err := Spec(&buf, s); err != nil {
@@ -122,7 +124,7 @@ func TestInspectSpecRedactedSummary(t *testing.T) {
 	}
 	out := buf.String()
 	t.Log("\n" + out)
-	for _, want := range []string{"nas", "NAS_URL", "Auth: http", "POST /api/login", "NASSESSID", "X-Csrf-Token", "data.token"} {
+	for _, want := range []string{"nas", "NAS_URL", "Auth: http", "POST /api/login", "NASSESSID", "X-Csrf-Token", "data.token", `header Authorization, prefixed "Bearer "`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q", want)
 		}

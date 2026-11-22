@@ -100,21 +100,26 @@ func (f *fakeAPI) authorized(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// loginPage is a hash-routed app: the login form exists only at #/login, so
+// a browser login that drops the page URL's fragment never finds it.
 const loginPage = `<!doctype html><html><body>
-<form id="f"><input id="username"><input id="password" type="password"><button id="login" type="submit">Log in</button></form>
-<pre id="out"></pre>
+<div id="app"><p>Loading</p></div>
 <script>
-document.getElementById('f').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const user = document.getElementById('username').value;
-  let pw = document.getElementById('password').value;
-  const n = await (await fetch('/api/nonce')).json();
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw + ':' + n.nonce));
-  pw = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-  const r = await fetch('/api/login', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({username: user, password: pw, nonce: n.nonce})});
-  document.getElementById('out').textContent = await r.text();
-});
+if (location.hash === '#/login') {
+  document.getElementById('app').innerHTML =
+    '<form id="f"><input id="username"><input id="password" type="password"><button id="login" type="submit">Log in</button></form><pre id="out"></pre>';
+  document.getElementById('f').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const user = document.getElementById('username').value;
+    let pw = document.getElementById('password').value;
+    const n = await (await fetch('/api/nonce')).json();
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw + ':' + n.nonce));
+    pw = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    const r = await fetch('/api/login', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username: user, password: pw, nonce: n.nonce})});
+    document.getElementById('out').textContent = await r.text();
+  });
+}
 </script></body></html>`
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -204,6 +209,20 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.lastPath = r.URL.Path
 		f.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": path.Base(r.URL.Path)})
+	case r.URL.Path == "/api/v2/me":
+		// A bearer-token endpoint: the login token after "Bearer ".
+		auth := r.Header.Get("Authorization")
+		f.mu.Lock()
+		ok := false
+		for _, token := range f.sessions {
+			ok = ok || auth == "Bearer "+token
+		}
+		f.mu.Unlock()
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "bad bearer token"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": f.user})
 	case r.URL.Path == "/api/big":
 		if !f.authorized(w, r) {
 			return
@@ -532,6 +551,33 @@ func TestGeneratedServerHTTPMode(t *testing.T) {
 	}
 }
 
+func TestGeneratedServerBearerToken(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a generated server")
+	}
+	t.Parallel()
+	_, srv := newFakeAPI(false)
+	defer srv.Close()
+	s := httpSpec()
+	s.Auth.Session.Tokens = append(s.Auth.Session.Tokens, spec.TokenFlow{
+		Name:   "authorization",
+		From:   spec.TokenRef{ResponseJSON: "data.token"},
+		To:     spec.TokenRef{Header: "Authorization"},
+		Prefix: "Bearer ",
+	})
+	s.Tools = []spec.Tool{{
+		Name: "whoami", Description: "Show the logged-in user.", Enabled: true, Kind: "read",
+		Request: spec.Request{Method: "GET", Path: "/api/v2/me", BodyType: "none"},
+		Inputs:  []spec.Input{},
+		Source:  spec.Source{Key: "GET /api/v2/me", Samples: 1},
+	}}
+	bin := buildServer(t, s)
+	cs := connect(t, bin, "NAS_URL="+srv.URL, "NAS_USER=admin", "NAS_PASSWORD=hunter2-nas", "NAS_FILES_DIR="+t.TempDir())
+	if text := mustOK(t, cs, "whoami", nil); !strings.Contains(text, `"user":"admin"`) {
+		t.Errorf("whoami = %s", text)
+	}
+}
+
 func TestGeneratedServerBadPassword(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a generated server")
@@ -600,7 +646,7 @@ func TestGeneratedServerBrowserMode(t *testing.T) {
 	defer srv.Close()
 	s := browserSpec()
 	s.Service.BaseURL = ""
-	s.Auth.Login.PageURL = "http://192.168.1.10:8181/" // rebased onto NAS_URL at run time
+	s.Auth.Login.PageURL = "http://192.168.1.10:8181/#/login" // rebased onto NAS_URL at run time, fragment kept
 	s.Tools = s.Tools[:2]
 	bin := buildServer(t, s)
 	cs := connect(t, bin, "NAS_URL="+srv.URL, "NAS_USER=admin", "NAS_PASSWORD=hunter2-nas", "NAS_FILES_DIR="+t.TempDir(), "NAS_BROWSER="+chrome)

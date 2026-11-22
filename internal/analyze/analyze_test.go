@@ -975,11 +975,12 @@ func TestAuthVariants(t *testing.T) {
 			t.Fatalf("tokens = %+v", s.Auth.Session.Tokens)
 		}
 		tf := s.Auth.Session.Tokens[0]
-		if tf.From != (spec.TokenRef{ResponseJSON: "access_token"}) || tf.To != (spec.TokenRef{Header: "Authorization"}) {
+		if tf.From != (spec.TokenRef{ResponseJSON: "access_token"}) || tf.To != (spec.TokenRef{Header: "Authorization"}) || tf.Prefix != "Bearer " {
 			t.Fatalf("token flow = %+v", tf)
 		}
-		if !s.Auth.Review || !strings.Contains(strings.Join(s.Auth.ReviewNotes, " "), `"Bearer"`) {
-			t.Fatalf("want a note about the Bearer prefix: %q", s.Auth.ReviewNotes)
+		// The prefix is in the spec, so it needs no review.
+		if strings.Contains(strings.Join(s.Auth.ReviewNotes, " "), "Bearer") {
+			t.Fatalf("unexpected note about the Bearer prefix: %q", s.Auth.ReviewNotes)
 		}
 		on := toolByName(t, s, "turn_on")
 		if on.Kind != "change" || on.Request.Path != "/api/v2/devices/{id}/state" {
@@ -1126,6 +1127,8 @@ func TestAnalyzeOddEntries(t *testing.T) {
 	b.add(req{method: "GET", url: "/api/huge", respMime: "application/json"})
 	b.h.Log.Entries[len(b.h.Log.Entries)-1].Response.Content.Truncated = true
 	b.add(req{method: "GET", url: "/api/blob", respMime: "application/octet-stream", respBody: "\xff\xfe\x00binary"})
+	b.add(req{method: "PUT", url: "/api/firmware", reqMime: "application/json", respMime: "application/json", respBody: `{"ok":true}`})
+	b.h.Log.Entries[len(b.h.Log.Entries)-1].Request.PostData = &har.PostData{MimeType: "application/json", Truncated: true}
 	b.add(req{method: "HEAD", url: "/api/ping/"})
 	b.add(req{method: "GET", url: "/api/search?tag=a&tag=b&q=x", respMime: "application/json", respBody: `[]`})
 	b.add(req{method: "POST", url: "/", reqMime: "application/json", reqBody: `{"method":"System.Info","params":{},"id":1}`, respMime: "application/json", respBody: `{"result":{}}`})
@@ -1146,6 +1149,9 @@ func TestAnalyzeOddEntries(t *testing.T) {
 	}
 	if failed := toolByKey(t, s, "POST /api/failed"); !strings.Contains(strings.Join(failed.ReviewNotes, " "), "no successful response was recorded (status 0)") {
 		t.Errorf("a call that never succeeded should be flagged: %q", failed.ReviewNotes)
+	}
+	if fw := toolByKey(t, s, "PUT /api/firmware"); !fw.Review || !strings.Contains(strings.Join(fw.ReviewNotes, " "), "recording cap") {
+		t.Errorf("a request body dropped by the recording cap should be flagged: %+v %q", fw.Request, fw.ReviewNotes)
 	}
 	if cfg := toolByKey(t, s, "PUT /api/cfg"); cfg.Response.Example != "saved" || cfg.Kind != "change" {
 		t.Errorf("cfg = %+v", cfg)

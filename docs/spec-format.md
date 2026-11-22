@@ -320,6 +320,17 @@ requests. Each sets exactly one of these keys:
 | `query` | A query string key |
 | `body` | A dotted path into the request body |
 
+An optional `prefix` is sent in front of the value. Bearer tokens use it:
+
+```yaml
+  - name: authorization
+    from:
+      response_json: access_token
+    to:
+      header: Authorization
+    prefix: "Bearer "
+```
+
 Tokens are handled by the server and are never tool inputs.
 
 ## tools
@@ -513,7 +524,8 @@ anything, refuse one that breaks these rules, and list every problem:
   password selectors.
 - In `http` mode the login request has an upper-case method and a path
   starting with `/`.
-- Every token sets exactly one key in `from` and exactly one in `to`.
+- Every token sets exactly one key in `from` and exactly one in `to`, and
+  its `prefix` has no control characters such as newlines.
 - `relogin_on` holds HTTP status codes (100 to 599).
 - Tool names match `^[a-z][a-z0-9_]{0,63}$` and are unique.
 - `kind` is `read`, `change` or `destructive`.

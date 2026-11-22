@@ -133,8 +133,9 @@ scrambles the password in the page, `auth.mode` must be `browser`.
 **Certificate errors.** Set `<P>_INSECURE=1` for a device with a
 self-signed certificate.
 
-**Browser mode fails to log in.** Google Chrome or Chromium must be installed
-on the computer running the server. Check the selectors in
+**Browser mode fails to log in.** Google Chrome, Chromium or Edge must be
+installed on the computer running the server; set `<P>_BROWSER` to its path
+if the server can't find it. Check the selectors in
 `auth.login.form` against the device's login page, in case a firmware update
 changed it.
 

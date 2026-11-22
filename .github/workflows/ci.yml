@@ -30,6 +30,13 @@ jobs:
       - name: vet
         run: go vet ./...
 
+      # Ubuntu 23.10 and later can block the unprivileged user namespaces
+      # that Chrome's sandbox needs. Allow them so the recorder and
+      # end-to-end tests can start Chrome with its sandbox on.
+      - name: allow Chrome's sandbox
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
       # The recorder and end-to-end tests drive the Chrome the runner images
       # ship with; they skip themselves where no browser is found.
       - name: test

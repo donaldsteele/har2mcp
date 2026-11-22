@@ -210,6 +210,10 @@ har2mcp analyze nas.har nas-2.har --name nas
 har2mcp generate nas.spec.yaml --target go
 ```
 
+Use the same `--name` (or `-o`) as the first time. Without it, a device
+reached by IP address gets the name `device` and a new `device.spec.yaml`
+instead of an update to `nas.spec.yaml`.
+
 `generate` never overwrites `custom.go` in the output folder, which is
 where you can add your own tools in Go
 ([docs/generated-servers.md](docs/generated-servers.md#customgo-your-own-code)).
@@ -221,11 +225,12 @@ where you can add your own tools in Go
 
 | Variable        | Purpose |
 |-----------------|---------|
-| `<P>_URL`       | The device's address, for example `http://192.168.1.10` |
+| `<P>_URL`       | The device's address, for example `http://192.168.1.10`. Default: the address you recorded |
 | `<P>_USER`      | Username to log in with |
 | `<P>_PASSWORD`  | Password to log in with |
 | `<P>_INSECURE`  | `1` skips TLS certificate verification, for self-signed certificates |
 | `<P>_FILES_DIR` | The only folder that upload and download tools may use. Default: `~/har2mcp-files/<name>` |
+| `<P>_BROWSER`   | Browser-mode servers only: the path to Chrome, Chromium or Edge, if the server can't find one |
 
 ## Commands
 
@@ -259,11 +264,12 @@ analysis is merged into it and your hand edits are kept.
 | `--name n` | Service name: lower-case letters, digits and `_`, starting with a letter, at most 32 characters. It sets the environment variable prefix. Default: the first part of the device's host name, or `device` for an IP address |
 | `--host h` | A host whose requests to keep. Repeat it for more than one. Default: the host of the recorded start page, or for a plain HAR the host most API calls went to |
 
-### `har2mcp inspect <file.har|spec.yaml>`
+### `har2mcp inspect <file.har|spec.yaml> [--name n] [--host h]...`
 
 Prints a summary of a recording or a spec, with secrets left out: the login
 mode, the tools as `<kind> <name> <METHOD> <path>`, the review flags and the
-file tools.
+file tools. For a recording, it shows what `analyze` would make of it;
+`--name` and `--host` work as they do for `analyze`.
 
 ### `har2mcp redact <in.har> -o <out.har>`
 

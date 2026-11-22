@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -91,6 +92,9 @@ func (s *Spec) Validate() error {
 		}
 		if n := tf.To.count(); n != 1 {
 			add("auth.session.tokens[%d] (%s): to must set exactly one of response_json, response_header, cookie, header, query, body (has %d)", i, tf.Name, n)
+		}
+		if strings.ContainsFunc(tf.Prefix, unicode.IsControl) {
+			add("auth.session.tokens[%d] (%s): prefix must not contain control characters such as newlines", i, tf.Name)
 		}
 	}
 	for _, code := range a.ReloginOn {

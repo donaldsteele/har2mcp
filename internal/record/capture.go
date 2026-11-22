@@ -438,6 +438,7 @@ func (r *recorder) httpEntry(rr *reqRecord) har.Entry {
 		if !rr.postOmitted && int64(len(rr.postData)) <= r.bodyCap {
 			pd.Text = strings.ToValidUTF8(string(rr.postData), "\uFFFD")
 		}
+		pd.Truncated = pd.Text == "" && size > r.bodyCap
 		req.PostData = pd
 		req.BodySize = size
 	}

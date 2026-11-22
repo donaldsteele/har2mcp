@@ -44,7 +44,7 @@ func init() {
 		"inspect": {
 			run:     runInspect,
 			summary: "print a redacted summary of a HAR or spec",
-			usage:   "inspect <file.har|spec.yaml>",
+			usage:   "inspect <file.har|spec.yaml> [--name n] [--host h]...",
 		},
 		"redact": {
 			run:     runRedact,
